@@ -30,14 +30,14 @@ def run_phonon_calculation(atoms, calculator, supercell_n, delta, output_dir):
    print("Phonon calculation completed.")
    return ph
 
-def get_phonon_results(ph, atoms, units):
+def get_phonon_results(ph, atoms, units, phonon_path_npoints=100, phonon_dos_grid=(40,40,40)): # NEW ARGS
    """Gets band structure and DOS results and converts units."""
    # Get the band path object
-   path = atoms.cell.bandpath(npoints=100) # Use default path or specify if needed
+   path = atoms.cell.bandpath(npoints=phonon_path_npoints) # Use phonon_path_npoints
 
    # Get band structure and DOS in default energy units (eV)
    bs = ph.get_band_structure(path)
-   dos = ph.get_dos(kpts=(40, 40, 40)).sample_grid(npts=200, width=1e-4)
+   dos = ph.get_dos(kpts=phonon_dos_grid).sample_grid(npts=200, width=1e-4)
 
    # Convert energies based on chosen units
    if units == "THz":

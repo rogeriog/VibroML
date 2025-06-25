@@ -11,11 +11,7 @@ from utils.phonon_utils import run_phonon_calculation, get_phonon_results, analy
 from utils.plotting_utils import plot_phonon_results, save_raw_data
 from utils.utils import clean_phonon_cache
 
-# Define the threshold for considering a phonon frequency as "negative" (unstable)
-# This threshold is in THz by default.
-NEGATIVE_PHONON_THRESHOLD_THZ = -0.1
-
-def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, delta, fmax, output_dir, prefix="phonon_run"):
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0):
    """
    Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
    This function is a core component used by both parameter sweep and soft mode optimization.
@@ -35,8 +31,7 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, de
 
    # --- Step 2: Get and Process Phonon Results ---
    print("\n--- Step 2: Getting and Processing Phonon Results ---")
-   bs, path, dos, bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, y_label, bsmin = get_phonon_results(ph, atoms, units)
-
+   bs, path, dos, bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, y_label, bsmin = get_phonon_results(ph, atoms, units, phonon_path_npoints, phonon_dos_grid)
    # --- Step 3: Save Raw Data ---
    print("\n--- Step 3: Saving Raw Data ---")
    save_raw_data(bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, supercell_n, delta, fmax, output_dir)
@@ -48,8 +43,8 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, de
 
    # --- Step 5: Analyze Special Points and Softest Mode ---
    print("\n--- Step 5: Analyzing Special Points and Softest Mode ---")
-   softest_mode_info = analyze_special_points_and_modes(
-      ph, bs, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir
+   softest_mode_info = analyze_special_points_and_modes(  
+      ph, bs, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir, traj_kT=traj_kT  
    )
    # --- Step 6: Save comprehensive run details to a readable file ---
    summary_filename = os.path.join(output_dir, f"{prefix}_phonon_run_summary.txt")  
@@ -110,149 +105,147 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, de
    return softest_mode_info, bsmin, time_taken
 
 
-def run_parameter_sweep_optimization(args, output_dir):
-   """
-   Runs the parameter sweep auto-optimization loop.
-   If a soft mode is found in the best configuration, it triggers the soft mode optimization.
-   """
-   print("Running in parameter sweep auto mode to find optimal settings...")
-   best_negative_frequency = -float('inf') # We want to find the LEAST negative (closest to zero or positive)
-   best_settings = {}
-   best_softest_mode_info = None # To store softest mode info for the best run
-   best_relaxed_atoms = None # To store the relaxed atoms for the best run
-
-   supercell_ns = [2, 3, 4]
-   deltas = [0.05, 0.03, 0.01]
-   fmax_values = [0.001, 0.0005, 0.0001]
-
-   if not (len(supercell_ns) == len(deltas) == len(fmax_values)):
-      print("Error: For --auto mode with sequential optimization, supercell_ns, deltas, and fmax_values lists must have the same length.")
-      sys.exit(1)
-
-   results = []
-   previous_best_negative_frequency = - float('inf')
-
-   # Load and potentially relax the initial structure once
-   print("\n--- Loading and potentially relaxing initial structure for parameter sweep ---")
-   struct, initial_atoms = load_structure(args.cif)
-   if struct is None or initial_atoms is None:
-       print("Failed to load initial structure.")
-       return None
-
-   calculator = initialize_calculator(args.engine)
-   if calculator is None:
-       print("Failed to initialize calculator.")
-       return None
-
-   relaxed_initial_atoms = initial_atoms.copy()
-   if not args.no_relax:
-       initial_relax_dir = os.path.join(output_dir, "initial_relaxation_for_sweep")
-       os.makedirs(initial_relax_dir, exist_ok=True)
-       relaxed_initial_atoms = relax_structure(initial_atoms.copy(), calculator, args.engine, args.fmax, initial_relax_dir, args.cif)
-       if relaxed_initial_atoms is None:
-           print("Initial relaxation failed. Exiting parameter sweep.")
-           return None
-   else:
-       print("Skipping initial structure relaxation for parameter sweep.")
-
-   original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
-
-   for i in range(len(supercell_ns)):
-      sc_n = supercell_ns[i]
-      d = deltas[i]
-      fm = fmax_values[i]
-
-      print(f"\n--- Testing Supercell N: {sc_n}, Delta: {d}, Fmax: {fm} ---")
-      current_output_dir = os.path.join(output_dir, f"N{sc_n}_D{d}_F{fm}")
-      os.makedirs(current_output_dir, exist_ok=True)
-
-      run_settings = vars(args).copy()
-      run_settings['supercell_n'] = sc_n
-      run_settings['delta'] = d
-      run_settings['fmax'] = fm
-      with open(os.path.join(current_output_dir, "run_settings.json"), 'w') as f:
-         json.dump(run_settings, f, indent=4)
-
-      # Call the unified phonon analysis function
-      softest_mode_info_current, neg_freq_at_special_point, time_taken = run_single_phonon_analysis(
-         relaxed_initial_atoms.copy(), calculator, args.engine, args.units, sc_n, d, fm, current_output_dir, prefix=original_prefix
-      )
-
-      if neg_freq_at_special_point is not None:
-         results.append({
-               "supercell_n": sc_n,
-               "delta": d,
-               "fmax": fm,
-               "negative_frequency_at_special_point": neg_freq_at_special_point,
-               "time_taken": time_taken
-         })
-
-         if neg_freq_at_special_point > best_negative_frequency:
-               best_negative_frequency = neg_freq_at_special_point
-               best_settings = {"supercell_n": sc_n, "delta": d, "fmax": fm}
-               best_softest_mode_info = softest_mode_info_current # Store the softest mode info
-               best_relaxed_atoms = relaxed_initial_atoms.copy() # Store the atoms object for the best run
-
-         if i > 0:
-               improvement = best_negative_frequency - previous_best_negative_frequency
-               improvement_threshold = NEGATIVE_PHONON_THRESHOLD_THZ # Use the base THz threshold
-               if args.units == "cm-1":
-                  improvement_threshold = NEGATIVE_PHONON_THRESHOLD_THZ * 33.35641
-               elif args.units == "eV":
-                  improvement_threshold = NEGATIVE_PHONON_THRESHOLD_THZ * 4.135667696e-3
-
-               # Note: We are looking for improvement, so a *larger* negative frequency is better (closer to zero)
-               # If the improvement is too small (i.e., current best is not significantly better than previous best)
-               if improvement < abs(improvement_threshold * 0.5): # Use a fraction of the threshold for early stopping
-                  print(f"Improvement in negative frequency ({improvement:.4f} {args.units}) is less than {abs(improvement_threshold * 0.5):.4f} {args.units}. Stopping parameter sweep.")
-                  break
-
-         previous_best_negative_frequency = best_negative_frequency
-
-   print("\n--- Parameter sweep auto-optimization complete ---")
-   print(f"Most negative frequency at a special point found: {best_negative_frequency:.4f} {args.units}")
-   print(f"Optimal settings: Supercell N = {best_settings.get('supercell_n')}, Delta = {best_settings.get('delta')}, Fmax = {best_settings.get('fmax')}")
-
-   with open(os.path.join(output_dir, "auto_results.json"), 'w') as f:
-      json.dump(results, f, indent=4)
-
-   # After parameter sweep, if a soft mode is still present, trigger the iterative soft mode optimization
-   # Convert threshold to current units for comparison
-   threshold_in_current_units = NEGATIVE_PHONON_THRESHOLD_THZ
-   if args.units == "cm-1":
-       threshold_in_current_units *= 33.35641
-   elif args.units == "eV":
-       threshold_in_current_units *= 4.135667696e-3
-
-   if best_negative_frequency < threshold_in_current_units and best_softest_mode_info is not None and best_relaxed_atoms is not None:
-       print(f"\nSoft mode detected ({best_negative_frequency:.4f} {args.units}) after parameter sweep. Initiating iterative soft mode optimization...")
-       # Pass the best relaxed atoms and its softest mode info to the iterative function
-       run_soft_mode_optimization(
-           args, # Pass all original arguments
-           output_dir,
-           best_relaxed_atoms, # The structure that had the soft mode
-           best_softest_mode_info # The softest mode info from that structure
-       )
-   else:
-       print("\nNo significant soft mode detected after parameter sweep, or structure is stable enough. Skipping iterative soft mode optimization.")
-
-   return best_settings
-
-
-def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mode_analysis, initial_softest_mode_info):
+def run_parameter_sweep_optimization(args, output_dir, supercell_ns, deltas, fmax_values, negative_phonon_threshold_thz, soft_mode_max_iterations, soft_mode_displacement_scales, soft_mode_num_top_structures_to_analyze):
     """
-    Runs the iterative soft mode displacement and relaxation workflow.
+    Runs the parameter sweep auto-optimization loop.
+    If a soft mode is found in the best configuration, it triggers the soft mode optimization.
+    """
+    print("Running in parameter sweep auto mode to find optimal settings...")
+    best_negative_frequency = -float('inf') # We want to find the LEAST negative (closest to zero or positive)
+    best_settings = {}
+    best_softest_mode_info = None # To store softest mode info for the best run
+    best_relaxed_atoms = None # To store the relaxed atoms for the best run
 
-    Args:
-        args (argparse.Namespace): Command line arguments.
-        base_output_dir (str): The main output directory for the entire run.
-        initial_atoms_for_soft_mode_analysis (ase.atoms.Atoms): The starting structure
-                                                                 (e.g., relaxed initial structure or best from sweep).
-        initial_softest_mode_info (dict): The softest mode information from the initial phonon analysis
-                                          of `initial_atoms_for_soft_mode_analysis`.
+
+    if not (len(supercell_ns) == len(deltas) == len(fmax_values)):
+        print("Error: For --auto mode with sequential optimization, supercell_ns, deltas, and fmax_values lists must have the same length.")
+        sys.exit(1)
+
+    results = []
+    previous_best_negative_frequency = - float('inf')
+
+    threshold_in_current_units = negative_phonon_threshold_thz  
+    if args.units == "cm-1":  
+        threshold_in_current_units *= 33.35641  
+    elif args.units == "eV":  
+        threshold_in_current_units *= 4.135667696e-3
+            
+    # Load and potentially relax the initial structure once
+    print("\n--- Loading and potentially relaxing initial structure for parameter sweep ---")
+    struct, initial_atoms = load_structure(args.cif)
+    if struct is None or initial_atoms is None:
+        print("Failed to load initial structure.")
+        return None
+
+    calculator = initialize_calculator(args.engine)
+    if calculator is None:
+        print("Failed to initialize calculator.")
+        return None
+
+    relaxed_initial_atoms = initial_atoms.copy()
+    if not args.no_relax:
+        initial_relax_dir = os.path.join(output_dir, "initial_relaxation_for_sweep")
+        os.makedirs(initial_relax_dir, exist_ok=True)
+        relaxed_initial_atoms = relax_structure(initial_atoms.copy(), calculator, args.engine, args.fmax, initial_relax_dir, args.cif)
+        if relaxed_initial_atoms is None:
+            print("Initial relaxation failed. Exiting parameter sweep.")
+            return None
+    else:
+        print("Skipping initial structure relaxation for parameter sweep.")
+
+    original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
+
+    for i in range(len(supercell_ns)):
+        sc_n = supercell_ns[i]
+        d = deltas[i]
+        fm = fmax_values[i]
+
+        print(f"\n--- Testing Supercell N: {sc_n}, Delta: {d}, Fmax: {fm} ---")
+        current_output_dir = os.path.join(output_dir, f"N{sc_n}_D{d}_F{fm}")
+        os.makedirs(current_output_dir, exist_ok=True)
+
+        run_settings = vars(args).copy()
+        run_settings['supercell_n'] = sc_n
+        run_settings['delta'] = d
+        run_settings['fmax'] = fm
+        with open(os.path.join(current_output_dir, "run_settings.json"), 'w') as f:
+            json.dump(run_settings, f, indent=4)
+
+        # Call the unified phonon analysis function
+        softest_mode_info_current, neg_freq_at_special_point, time_taken = run_single_phonon_analysis(  
+        relaxed_initial_atoms.copy(), calculator, args.engine, args.units, sc_n, d, fm, current_output_dir, prefix=original_prefix,  
+        phonon_path_npoints=args.phonon_path_npoints, # Pass from args (which gets from defaults)  
+        phonon_dos_grid=args.phonon_dos_grid,       # Pass from args (which gets from defaults)  
+        traj_kT=args.default_traj_kT                # Pass from args (which gets from defaults)  
+            )
+
+        if neg_freq_at_special_point is not None:
+            results.append({
+                "supercell_n": sc_n,
+                "delta": d,
+                "fmax": fm,
+                "negative_frequency_at_special_point": neg_freq_at_special_point,
+                "time_taken": time_taken
+            })
+            
+            if neg_freq_at_special_point > best_negative_frequency:
+                best_negative_frequency = neg_freq_at_special_point
+                best_settings = {"supercell_n": sc_n, "delta": d, "fmax": fm}
+                best_softest_mode_info = softest_mode_info_current # Store the softest mode info
+                best_relaxed_atoms = relaxed_initial_atoms.copy() # Store the atoms object for the best run
+
+                
+                improvement = best_negative_frequency - previous_best_negative_frequency
+                
+
+                # Note: We are looking for improvement, so a *less* negative frequency is better (closer to zero)
+                # If the improvement is too small (i.e., current best is not significantly better than previous best)
+                if improvement < abs(threshold_in_current_units * 0.5): # Use a fraction of the threshold for early stopping
+                    print(f"Improvement in negative frequency ({improvement:.4f} {args.units}) is less than {abs(threshold_in_current_units * 0.5):.4f} {args.units}. Stopping parameter sweep.")
+                    break
+
+            previous_best_negative_frequency = best_negative_frequency
+
+    print("\n--- Parameter sweep auto-optimization complete ---")
+    print(f"Most negative frequency at a special point found: {best_negative_frequency:.4f} {args.units}")
+    print(f"Optimal settings: Supercell N = {best_settings.get('supercell_n')}, Delta = {best_settings.get('delta')}, Fmax = {best_settings.get('fmax')}")
+
+    with open(os.path.join(output_dir, "auto_results.json"), 'w') as f:
+        json.dump(results, f, indent=4)
+
+    if best_negative_frequency < threshold_in_current_units and best_softest_mode_info is not None and best_relaxed_atoms is not None:
+        print(f"\nSoft mode detected ({best_negative_frequency:.4f} {args.units}) after parameter sweep. Initiating iterative soft mode optimization...")
+        # Pass the best relaxed atoms and its softest mode info to the iterative function
+        run_soft_mode_optimization(
+            args, # Pass all original arguments
+            output_dir,
+            best_relaxed_atoms, # The structure that had the soft mode
+            best_softest_mode_info # The softest mode info from that structure
+        )
+    else:
+        print("\nNo significant soft mode detected after parameter sweep, or structure is stable enough. Skipping iterative soft mode optimization.")
+
+    return best_settings
+
+
+def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mode_analysis, initial_softest_mode_info, is_primitive_run=False, max_iterations=1, displacement_scales=None, num_top_structures_to_analyze=3, negative_phonon_threshold_thz=-0.1):  
+    """  
+    Runs the iterative soft mode displacement and relaxation workflow.  
+  
+    Args:  
+        args (argparse.Namespace): Command line arguments.  
+        base_output_dir (str): The main output directory for the entire run.  
+        initial_atoms_for_soft_mode_analysis (ase.atoms.Atoms): The starting structure  
+                                                                 (e.g., relaxed initial structure or best from sweep).  
+        initial_softest_mode_info (dict): The softest mode information from the initial phonon analysis  
+                                          of `initial_atoms_for_soft_mode_analysis`.  
+        is_primitive_run (bool): If True, indicates this is a run specifically for primitive cell displacements.  
+        max_iterations (int): Maximum number of iterations for soft mode optimization.  
+        displacement_scales (list): List of scaling factors for the raw displacements.  
+        num_top_structures_to_analyze (int): Number of lowest energy structures to analyze phonons for.  
+        negative_phonon_threshold_thz (float): Threshold for considering a phonon frequency as "negative" (unstable) in THz.  
     """
     print("\n--- Running Soft Mode Iterative Optimization ---")
-    max_iterations = 3
 
     # Define supercell variants based on cell symmetry
     current_atoms = initial_atoms_for_soft_mode_analysis.copy()
@@ -275,21 +268,22 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
     
     if is_cubic:
         # For cubic, we only need unique combinations
-        supercell_variants = [(2,2,2), (2,2,1), (2,1,1)]
+        supercell_variants = [(1,1,1), (2,2,2), (2,2,1), (2,1,1)]
     elif is_tetragonal:
         # For tetragonal, we need more combinations but can still reduce
-        supercell_variants = [(2,2,2), (2,2,1), (2,1,2), (2,1,1)]
+        supercell_variants = [(1,1,1), (2,2,2), (2,2,1), (2,1,2), (2,1,1)]
     else:
         # For lower symmetry, use all combinations
-        supercell_variants = [(2,1,1), (1,2,1), (1,1,2), 
+        supercell_variants = [(1,1,1), (2,1,1), (1,2,1), (1,1,2), 
                             (2,2,1), (2,1,2), (1,2,2), 
                             (2,2,2)]    # Exponentially increasing displacement scales
-    displacement_scales = np.exp(np.linspace(np.log(10), np.log(100), 5)).tolist() # From ~10 to 100 Angstrom max total displacement
-    # Exponentially increasing displacement scales
-    displacement_scales = [round(s, 3) for s in displacement_scales] # Round for cleaner filenames
+    
+    if displacement_scales is None: # Fallback if not provided  
+        displacement_scales = np.exp(np.linspace(np.log(10), np.log(100), 5)).tolist()  
+        displacement_scales = [round(s, 3) for s in displacement_scales]
+
     print(f"Using displacement scales: {displacement_scales}")
 
-    num_top_structures_to_analyze = 3
 
     current_atoms = initial_atoms_for_soft_mode_analysis.copy()
     current_softest_mode_info = initial_softest_mode_info
@@ -302,10 +296,10 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
     original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
 
     # Convert threshold from THz to current units
-    threshold_in_current_units = NEGATIVE_PHONON_THRESHOLD_THZ
-    if args.units == "cm-1":
-        threshold_in_current_units *= 33.35641
-    elif args.units == "eV":
+    threshold_in_current_units = negative_phonon_threshold_thz # Use from arguments  
+    if args.units == "cm-1":  
+        threshold_in_current_units *= 33.35641  
+    elif args.units == "eV":  
         threshold_in_current_units *= 4.135667696e-3
 
     for iteration_idx in range(1, max_iterations + 1):
@@ -403,8 +397,11 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
 
                 # Run phonon analysis on this primitive cell
                 # Use args.supercell_n and args.delta for the phonon calculation on this primitive cell
-                softest_mode_info_top, most_negative_freq_top, time_taken_top = run_single_phonon_analysis(
-                    primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units, args.supercell_n, args.delta, args.fmax, top_structure_phonon_dir, prefix=f"{original_prefix}_iter{iteration_idx}_top{i+1}_final_phonon"
+                softest_mode_info_top, most_negative_freq_top, time_taken_top = run_single_phonon_analysis(  
+                    primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units, args.supercell_n, args.delta, args.fmax, top_structure_phonon_dir, prefix=f"{original_prefix}_iter{iteration_idx}_top{i+1}_final_phonon",  
+                    phonon_path_npoints=args.phonon_path_npoints, # Pass from args (which gets from defaults)  
+                    phonon_dos_grid=args.phonon_dos_grid,       # Pass from args (which gets from defaults)  
+                    traj_kT=args.default_traj_kT                # Pass from args (which gets from defaults)  
                 )
 
                 if most_negative_freq_top is not None:

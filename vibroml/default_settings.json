@@ -1,0 +1,17 @@
+{
+    "default_engine": "mace",
+    "default_fmax": 0.001,
+    "default_delta": 0.03,
+    "default_supercell_n": 3,
+    "screen_supercell_ns": [2, 3, 4],
+    "screen_deltas": [0.05, 0.03, 0.01],
+    "screen_fmax_values": [0.001, 0.0005, 0.0001],
+    "phonon_path_npoints": 100,
+    "phonon_dos_grid": [40, 40, 40],
+    "default_units": "THz",
+    "default_traj_kT": 1.0,
+    "negative_phonon_threshold_thz": -0.1,
+    "soft_mode_max_iterations": 1,
+    "soft_mode_displacement_scales": [10.0, 15.8, 25.1, 39.8, 63.1, 100.0],
+    "soft_mode_num_top_structures_to_analyze": 3
+}
