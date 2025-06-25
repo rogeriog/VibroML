@@ -260,7 +260,13 @@ def generate_displaced_supercells(primitive_atoms, softest_mode_info, supercell_
               filepath = os.path.join(supercell_dir, filename)
               write(filepath, cell_scaled_atoms)
               generated_files.append(filepath)
-              print(f"    Generated {filename} (displacement: {scale:.3f}, cell scale: {cell_scale:+.1%})")
+
+              # --- NEW: Save as .xyz as well ---  
+              filename_xyz = f"{original_prefix}_d{scale:.3f}_c{cell_label}.xyz"  
+              filepath_xyz = os.path.join(supercell_dir, filename_xyz)  
+              write(filepath_xyz, cell_scaled_atoms)  
+              # No need to add to generated_files as we only track CIFs for relaxation  
+              print(f"  Generated {filename} (displacement: {scale:.3f}, cell scale: {cell_scale:+.1%}) and {filename_xyz}")
 
    print("Finished generating displaced supercells with cell parameter variations.")
    return generated_files

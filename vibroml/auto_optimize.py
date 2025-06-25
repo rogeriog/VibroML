@@ -51,6 +51,56 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, de
    softest_mode_info = analyze_special_points_and_modes(
       ph, bs, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir
    )
+   # --- Step 6: Save comprehensive run details to a readable file ---
+   summary_filename = os.path.join(output_dir, f"{prefix}_phonon_run_summary.txt")  
+   with open(summary_filename, 'w') as f:  
+       f.write(f"--- Phonon Run Summary ---\n")  
+       f.write(f"Structure Formula: {atoms.get_chemical_formula()}\n")  
+       f.write(f"Total Number of Atoms: {len(atoms)}\n")  
+       f.write(f"Engine Used: {engine}\n")  
+       f.write(f"Units: {units}\n")  
+       f.write(f"Supercell Size (N,N,N): ({supercell_n}, {supercell_n}, {supercell_n})\n")  
+       f.write(f"Displacement Delta: {delta}\n")  
+       f.write(f"Fmax for Relaxation: {fmax}\n")  
+       f.write(f"Most Negative Frequency: {bsmin:.4f} {units}\n")  
+       f.write(f"Time Taken for Phonon Analysis: {time_taken:.2f} seconds\n\n")  
+  
+       # Add energy per atom (assuming it's available from a previous relaxation step or can be calculated)  
+       try:  
+           energy = atoms.get_potential_energy()  
+           energy_per_atom = energy / len(atoms)  
+           f.write(f"Energy of Structure: {energy:.6f} eV\n")  
+           f.write(f"Energy per Atom: {energy_per_atom:.6f} eV/atom\n\n")  
+       except Exception as e:  
+           f.write(f"Could not retrieve energy for this structure: {e}\n\n")  
+  
+       f.write("Path of K-points:\n")  
+       for i, (dist, label) in enumerate(zip(special_k_point_distances, special_k_point_labels)):  
+           f.write(f"  {label}: {dist:.4f}\n")  
+       f.write("\n")  
+  
+       # Attempt to read space group from the symmetry analysis file  
+       symmetry_file_path = os.path.join(output_dir, "relaxed_symmetry_analysis.txt") # Assuming relaxed structure was analyzed  
+       if not os.path.exists(symmetry_file_path):  
+           # If not found, try initial symmetry analysis file  
+           symmetry_file_path = os.path.join(output_dir, "initial_symmetry_analysis.txt")  
+  
+       if os.path.exists(symmetry_file_path):  
+           try:  
+               with open(symmetry_file_path, 'r') as sym_f:  
+                   sym_content = sym_f.read()  
+                   sg_number_line = next((line for line in sym_content.splitlines() if "Space group number:" in line), None)  
+                   sg_symbol_line = next((line for line in sym_content.splitlines() if "International symbol:" in line), None)  
+                   if sg_number_line:  
+                       f.write(f"{sg_number_line.strip()}\n")  
+                   if sg_symbol_line:  
+                       f.write(f"{sg_symbol_line.strip()}\n")  
+           except Exception as e:  
+               f.write(f"Could not read space group from symmetry analysis file: {e}\n")  
+       else:  
+           f.write("Space Group: Not available (symmetry analysis file not found).\n")  
+  
+   print(f"Comprehensive phonon run summary saved to: {summary_filename}")
 
    end_time = time.time()
    time_taken = end_time - start_time
@@ -327,22 +377,29 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
             top_structure_relaxed_supercell_atoms = result['relaxed_atoms']
             original_file_base = os.path.splitext(os.path.basename(result['original_file']))[0]
 
-            # Create a specific output directory for the phonon analysis of this top structure
-            top_structure_phonon_dir = os.path.join(base_output_dir, f"soft_mode_iter_{iteration_idx}_top_structure_{i+1}_phonon_analysis")
-            os.makedirs(top_structure_phonon_dir, exist_ok=True)
-
-            print(f"\nAnalyzing phonon for top structure {i+1} ({original_file_base})...")
-
-            # Find the primitive cell of the relaxed supercell structure for phonon analysis
-            try:
-                from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-                from pymatgen.io.ase import AseAtomsAdaptor
-
-                pmg_structure = AseAtomsAdaptor.get_structure(top_structure_relaxed_supercell_atoms)
-                analyzer = SpacegroupAnalyzer(pmg_structure)
-                primitive_pmg = analyzer.get_primitive_standard_structure()
-                primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(primitive_pmg)
-                print(f"  Found primitive cell for relaxed structure ({len(primitive_atoms_for_phonon)} atoms).")
+            # Create a specific output directory for the phonon analysis of this top structure  
+            top_structure_phonon_dir = os.path.join(base_output_dir, f"soft_mode_iter_{iteration_idx}_top_structure_{i+1}_phonon_analysis")  
+            os.makedirs(top_structure_phonon_dir, exist_ok=True)  
+  
+            print(f"\nAnalyzing phonon for top structure {i+1} ({original_file_base})...")  
+  
+            # Find the primitive cell of the relaxed supercell structure for phonon analysis  
+            try:  
+                from pymatgen.symmetry.analyzer import SpacegroupAnalyzer  
+                from pymatgen.io.ase import AseAtomsAdaptor 
+                from ase.io import read, write
+ 
+  
+                pmg_structure = AseAtomsAdaptor.get_structure(top_structure_relaxed_supercell_atoms)  
+                analyzer = SpacegroupAnalyzer(pmg_structure)  
+                primitive_pmg = analyzer.get_primitive_standard_structure()  
+                primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(primitive_pmg)  
+                print(f"  Found primitive cell for relaxed structure ({len(primitive_atoms_for_phonon)} atoms).")  
+  
+                # --- NEW: Save the primitive_atoms_for_phonon to its phonon analysis folder ---  
+                primitive_cif_path = os.path.join(top_structure_phonon_dir, f"{original_prefix}_iter{iteration_idx}_top{i+1}_primitive.cif")  
+                write(primitive_cif_path, primitive_atoms_for_phonon)  
+                print(f"  Saved primitive structure for phonon analysis to: {primitive_cif_path}")
 
                 # Run phonon analysis on this primitive cell
                 # Use args.supercell_n and args.delta for the phonon calculation on this primitive cell

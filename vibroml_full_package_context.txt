@@ -1,0 +1,1870 @@
+--- FILE: README.md ---
+### VibroML
+
+[![PyPI Version](https://img.shields.io/pypi/v/vibroml.svg)](https://pypi.org/project/vibroml/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+### Overview  
+VibroML is a powerful and user-friendly Python toolkit designed for efficient, Machine-Learned Interatomic Potential (MLIP)-driven vibrational analysis of crystalline materials. It streamlines the process of identifying and stabilizing dynamically unstable phases, making it an invaluable tool for materials discovery and design.
+
+Leveraging state-of-the-art MLIPs like MACE and M3GNet, VibroML can:  
+1.  **Compute Phonon Band Structures & Density of States (DOS):** Accurately predict vibrational properties.
+2.  **Screen for Imaginary (Negative) Modes:** Automatically detect dynamically unstable phonon modes.
+3.  **Automated Soft Mode Displacement & Re-optimization:** Displace atoms along unstable eigenmodes and re-optimize the structure to find lower-energy, stable configurations.
+4.  **Validate Dynamic Stability:** (Future) Utilize MLIP-powered Ab Initio Molecular Dynamics (AIMD) trajectories for robust stability assessment.
+
+This end-to-end workflow significantly reduces manual intervention, accelerating the discovery of novel, dynamically stable material phases.
+
+### Features  
+-   **Phonon-Only Mode:** Quickly compute phonon band structures and DOS, with detailed reporting of imaginary modes. Ideal for initial stability checks.
+-   **Auto-Screen Mode:** An intelligent, automated pipeline to detect unstable modes, displace atoms along them, re-optimize the structure, and iteratively stabilize it. This mode includes a parameter sweep to find optimal calculation settings.
+-   **Soft-Mode Iterative Optimization:** A dedicated workflow to systematically explore stable configurations by displacing along soft modes and relaxing, iterating until stability is achieved or limits are reached.
+-   **AIMD-Check Mode:** (Planned) Run short MLIP-based molecular dynamics simulations to provide dynamic stability metrics.
+-   **Command-Line Interface (CLI):** Simple and intuitive CLI for high-throughput screening and integration into automated workflows.
+
+### Installation  
+
+VibroML can be installed via `pip` or from source.
+
+```bash
+# Recommended: Via pip
+pip install vibroml
+
+# From source (for development or latest features)
+git clone https://github.com/your-org/vibroml.git
+cd vibroml
+pip install -e .
+```
+
+**Prerequisites:**
+-   Python 3.9+
+-   For MACE engine: `pip install mace-torch`
+-   For M3GNet engine: `pip install m3gnet` (usually installed with `vibroml` dependencies)
+-   Other scientific libraries (ASE, NumPy, Matplotlib, Pymatgen, Spglib) are handled by `pip install vibroml`.
+
+### Quickstart  
+
+#### Basic Usage
+
+To run a phonon calculation, you need a CIF file and specify the calculation engine.
+
+```bash
+vibroml --cif path/to/your_structure.cif --engine mace
+```
+
+#### 1. Phonon-Only Mode  
+This mode performs a single phonon calculation on your structure. It will relax the structure by default, then compute the phonon band structure and DOS, and report any imaginary modes.
+
+```bash
+# Run a phonon calculation with MACE, skipping relaxation
+vibroml --cif examples/your_material.cif --engine mace --no-relax
+
+# Run with M3GNet, using a 4x4x4 supercell and custom displacement
+vibroml --cif examples/another_material.cif --engine m3gnet --supercell_n 4 --delta 0.02 --units cm-1
+```
+**Output:**
+-   `phonon_bs_dos_*.png` and `*.svg`: Plots of the phonon band structure and DOS.
+-   `band_structure_energies_*.txt`, `dos_energies_*.txt`, `k_point_distances_*.txt`, `special_k_points_*.txt`: Raw data files.
+-   `special_point_analysis.json`: Detailed analysis of frequencies at high-symmetry k-points.
+-   `softest_mode_displacements.txt`: Text file detailing the displacements for the most negative phonon mode.
+-   `softest_mode_*.traj` and `softest_mode_*.xyz`: ASE trajectory and XYZ files visualizing the softest mode.
+-   `initial_settings.json`: Records the command-line arguments used for the run.
+-   `relax.traj` and `relax.xyz`: Trajectory of the relaxation process (if not `--no-relax`).
+-   `*_relaxed_*.cif`: The relaxed structure CIF file.
+-   `initial_symmetry_analysis.txt` and `relaxed_symmetry_analysis.txt`: Symmetry information for initial and relaxed structures.
+-   `energy_info.txt`: Summary of energy changes during relaxation.
+-   `*_phonon_run_summary.txt`: A comprehensive summary of the phonon run, including energy per atom, k-point path, space group, supercell size, and total atoms.
+
+#### 2. Auto-Screen Mode  
+This mode automates the search for stable phases. It performs a parameter sweep over supercell sizes, displacement deltas, and force tolerances to find the best settings that minimize negative imaginary phonons. If a soft mode persists after the sweep, it automatically triggers an iterative soft mode displacement and relaxation workflow.
+
+```bash
+# Run auto-screen with MACE
+vibroml --cif examples/unstable_material.cif --engine mace --auto
+
+# Run auto-screen with M3GNet, allowing initial relaxation
+vibroml --cif examples/another_unstable.cif --engine m3gnet --auto --fmax 0.0005
+```
+**Output:**
+In addition to the phonon-only mode outputs for each tested configuration, this mode will generate:
+-   `auto_results.json`: A summary of the parameter sweep results.
+-   `soft_mode_iter_*/` directories: Each iteration of the soft mode optimization will have its own folder containing:
+    -   `supercell_*/`: Subdirectories for each generated supercell variant.
+    -   `*_d*.cif` and `*_d*.xyz`: Displaced supercell structures.
+    -   `relaxation_summary.txt`: Summary of relaxation for all displaced structures in that folder.
+    -   `soft_mode_iter_*_top_structure_*_phonon_analysis/`: Phonon analysis results for the top lowest-energy relaxed structures from that iteration, including their primitive cell CIFs.
+
+#### 3. AIMD-Check Mode  
+NOT YET IMPLEMENTED. This feature will allow users to perform short MLIP-based AIMD simulations to assess the dynamic stability of structures at finite temperatures.
+
+```python
+# Example (conceptual, not yet implemented)
+# vibroml --cif stable_candidate.cif --engine mace --aimd --temperature 300 --steps 1000
+```
+
+### Command-Line Interface  
+
+Use `vibroml --help` to see all available commands and options.
+
+```bash
+# General help
+vibroml --help
+
+# Phonon-only mode help
+vibroml --cif --help
+
+# Auto-screen mode help
+vibroml --auto --help
+```
+
+### Package Structure  
+```
+vibroml/
+├── __init__.py
+├── main.py                 # Main CLI entry point
+├── auto_optimize.py        # Logic for auto-screening and soft mode optimization
+└── utils/
+    ├── __init__.py
+    ├── config.py           # Configuration constants (e.g., unit conversion factors)
+    ├── phonon_utils.py     # Functions for phonon calculations, results processing, and soft mode analysis
+    ├── plotting_utils.py   # Functions for generating phonon plots
+    ├── relaxation_utils.py # Functions for structure relaxation and symmetry analysis
+    └── structure_utils.py  # Functions for loading structures, initializing calculators, and generating displaced supercells
+    └── utils.py            # General utility functions (e.g., cache cleaning, MACE device detection)
+```
+
+### Contributing  
+We welcome contributions to VibroML! Please follow these steps:  
+1.  **Fork the repository:** Create your own fork on GitHub.  
+2.  **Create a feature branch:** `git checkout -b feature/your-feature-name`  
+3.  **Implement your changes:** Write clear, concise code.  
+4.  **Write tests:** Ensure your new features are covered by tests and existing tests pass.  
+5.  **Update documentation:** If your changes affect functionality, update the README or other relevant documentation.  
+6.  **Submit a pull request:** Provide a clear and detailed description of your changes.  
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) (if you create one) for more detailed guidelines.
+
+### License  
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for full text.
+
+### Citation  
+If you use VibroML in your work, please cite:  
+```
+@software{vibroml2025,
+  author = {Rogerio A. Gouvea},
+  title  = {{VibroML}: Machine-Learned Vibrational Analysis & Stability Toolkit},
+  year   = {2025},
+  url    = {https://github.com/rogeriog/vibroml}
+}
+```
+
+--- END FILE: {file_path} ---
+
+--- FILE: setup.py ---
+# setup.py
+import os
+from setuptools import setup, find_packages
+
+# Utility function to read the README file.
+# Used for the long_description. It's nice, because now 1) we have a top level
+# README file and 2) it's easier to type in the README file than to put a raw
+# string in below ...
+def read(fname):
+    return open(os.path.join(os.path.abspath(os.path.dirname(__file__)), fname)).read()
+
+# Get the list of requirements from requirements.txt
+def get_requirements():
+    with open('requirements.txt') as f:
+        return f.read().splitlines()
+
+setup(
+    name="vibroml",
+    version="0.0.1", # Start with a small version number
+    author="Rogerio Gouvea",
+    author_email="rogeriog.em@gmail.com",
+    description=("A Python toolkit for ML-driven vibrational analysis of crystalline materials."),
+    license="MIT", # Or your chosen license
+    keywords="materials science, phonons, machine learning, AIMD, stability",
+    url="https://github.com/rogeriog/VibroML", # Replace with your actual GitHub repo URL
+    packages=find_packages(exclude=["tests", "docs"]), # Automatically find packages in the 'vibroml' directory
+    long_description=read('README.md'),
+    long_description_content_type='text/markdown', # Specify the content type for README.md
+    install_requires=get_requirements(), # Use the function to get requirements
+    classifiers=[
+        "Development Status :: 3 - Alpha", # Change as your project matures
+        "Topic :: Scientific/Engineering :: Physics",
+        "Topic :: Scientific/Engineering :: Chemistry",
+        "Topic :: Scientific/Engineering :: Materials Science",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Operating System :: OS Independent",
+    ],
+    # If you have a command-line entry point, define it here
+    entry_points={
+        'console_scripts': [
+            'vibroml=vibroml.main:main', # Assuming vibroml/main.py has a main() function for CLI
+        ],
+    },
+    python_requires='>=3.9', # Minimum Python version required
+)
+--- END FILE: {file_path} ---
+
+--- FILE NOT FOUND: requirements.txt ---
+
+--- FILE: vibroml/main.py ---
+# script.py (Revised)
+import argparse
+import os
+import time
+import json
+import sys
+
+# Import functions/classes from our new component files within the 'utils' package
+from utils.utils import clean_phonon_cache
+# Import the optimization functions from auto_optimize
+from auto_optimize import run_parameter_sweep_optimization, run_soft_mode_optimization, run_single_phonon_analysis, NEGATIVE_PHONON_THRESHOLD_THZ # Import the unified single phonon analysis and threshold
+from utils.structure_utils import load_structure, initialize_calculator
+from utils.relaxation_utils import relax_structure
+
+
+def main():
+    # --- Step 0: Argument Parsing ---
+    print("--- Step 0: Parsing Command Line Arguments ---")
+    parser = argparse.ArgumentParser(description="Calculate phonon band structure and DOS for crystal structures, with optional relaxation and soft mode analysis.")
+    parser.add_argument("--cif", type=str, required=True, help="Path to the CIF file.")
+    parser.add_argument("--no-relax", action="store_true", help="Skip relaxation of the structure before calculation.")
+    parser.add_argument("--engine", type=str, default="mace", help="Calculation engine (default: mace).")
+    parser.add_argument("--units", type=str, default="THz", choices=["THz", "cm-1", "eV"],
+                        help="Units for frequency (default: THz). Choose from THz, cm-1, eV.")
+    parser.add_argument("--supercell_n", type=int, default=3,
+                        help="Size of the supercell (N, N, N) for phonon calculation (default: 3).")
+    parser.add_argument("--delta", type=float, default=0.03,
+                        help="Displacement distance for finite difference phonon calculation (default: 0.03).")
+    parser.add_argument("--fmax", type=float, default=0.001,
+                        help="Maximum force tolerance for structure relaxation (default: 0.001 eV/Å).")
+    parser.add_argument("--auto", action="store_true", help="Automatically test multiple settings (parameter sweep) to minimize negative imaginary phonons. If a soft mode persists, it will trigger the iterative soft mode workflow.")
+    parser.add_argument("--run-soft-mode-after-single", action="store_true", help="If a soft mode is detected in a single phonon calculation, automatically run the iterative soft mode displacement and relaxation workflow.")
+
+
+    args = parser.parse_args()
+
+    # --- Step 0.1: Setup Output Directory and Clean Cache ---
+    print("\n--- Step 0.1: Setting up Output Directory and Cleaning Cache ---")
+    cif_filename_base = os.path.splitext(os.path.basename(args.cif))[0]
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    output_folder_name = f"{cif_filename_base}_phonon_output_{timestamp}"
+    output_dir = os.path.join(os.getcwd(), output_folder_name)
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Output directory created: {output_dir}")
+
+    # Clean up any old phonon cache files
+    clean_phonon_cache()
+
+    # Save initial settings
+    with open(os.path.join(output_dir, "initial_settings.json"), 'w') as f:
+        json.dump(vars(args), f, indent=4)
+    print("Initial settings saved.")
+
+    # --- Step 0.2: Run Calculation based on Mode ---
+    if args.auto:
+        print("\n--- Step 0.2: Running in Parameter Sweep Auto Optimization Mode ---")
+        # run_parameter_sweep_optimization now handles triggering soft mode optimization internally
+        run_parameter_sweep_optimization(args, output_dir)
+    else:
+        print("\n--- Step 0.2: Running Single Calculation Mode ---")
+        # In single mode, we still need to load and potentially relax the structure first
+        print("\n--- Loading and potentially relaxing initial structure for single run ---")
+        struct, initial_atoms = load_structure(args.cif)
+        if struct is None or initial_atoms is None:
+            print("Failed to load initial structure. Exiting.")
+            sys.exit(1)
+
+        calculator = initialize_calculator(args.engine)
+        if calculator is None:
+            print("Failed to initialize calculator. Exiting.")
+            sys.exit(1)
+
+        current_atoms = initial_atoms.copy()
+        if not args.no_relax:
+            initial_relax_dir = os.path.join(output_dir, "initial_relaxation_for_single_run")
+            os.makedirs(initial_relax_dir, exist_ok=True)
+            current_atoms = relax_structure(initial_atoms.copy(), calculator, args.engine, args.fmax, initial_relax_dir, args.cif)
+            if current_atoms is None:
+                print("Initial relaxation failed. Exiting single run.")
+                sys.exit(1)
+        else:
+            print("Skipping initial structure relaxation for single run.")
+
+        # Run a single phonon analysis with specified parameters on the (potentially relaxed) structure
+        current_run_output_dir = os.path.join(output_dir, f"SingleRun_N{args.supercell_n}_D{args.delta}_F{args.fmax}")
+        os.makedirs(current_run_output_dir, exist_ok=True)
+        print(f"Single run output directory created: {current_run_output_dir}")
+
+        run_settings = vars(args).copy()
+        with open(os.path.join(current_run_output_dir, "run_settings.json"), 'w') as f:
+            json.dump(run_settings, f, indent=4)
+        print("Run settings saved.")
+
+        # Execute the single phonon analysis step
+        softest_mode_info, most_negative_freq, time_taken = run_single_phonon_analysis(
+            current_atoms, calculator, args.engine, args.units, args.supercell_n, args.delta, args.fmax, current_run_output_dir, prefix=cif_filename_base
+        )
+
+        # If --run-soft-mode-after-single is enabled and a soft mode is detected
+        threshold_in_current_units = NEGATIVE_PHONON_THRESHOLD_THZ
+        if args.units == "cm-1":
+            threshold_in_current_units *= 33.35641
+        elif args.units == "eV":
+            threshold_in_current_units *= 4.135667696e-3
+
+        if args.run_soft_mode_after_single and softest_mode_info is not None and most_negative_freq < threshold_in_current_units:
+            print(f"\nSoft mode detected ({most_negative_freq:.4f} {args.units}) in single run. Initiating iterative soft mode optimization...")
+            run_soft_mode_optimization(
+                args,
+                output_dir,
+                current_atoms, # The structure that had the soft mode
+                softest_mode_info # The softest mode info from that structure
+            )
+        elif args.run_soft_mode_after_single:
+            print(f"\nNo significant soft mode detected ({most_negative_freq:.4f} {args.units}) in single run. Skipping iterative soft mode optimization.")
+
+
+    print("\n--- Phonon Calculation Script Finished ---")
+
+
+if __name__ == "__main__":
+    main()
+--- END FILE: {file_path} ---
+
+--- FILE: vibroml/auto_optimize.py ---
+# auto_optimize.py (Revised)
+import os
+import sys
+import json
+import time
+import numpy as np
+# Updated imports to reflect the 'utils' package
+from utils.structure_utils import load_structure, initialize_calculator, print_initial_structure_info, generate_displaced_supercells
+from utils.relaxation_utils import relax_structure, relax_structures_in_folder, find_lowest_energy_structures
+from utils.phonon_utils import run_phonon_calculation, get_phonon_results, analyze_special_points_and_modes
+from utils.plotting_utils import plot_phonon_results, save_raw_data
+from utils.utils import clean_phonon_cache
+
+# Define the threshold for considering a phonon frequency as "negative" (unstable)
+# This threshold is in THz by default.
+NEGATIVE_PHONON_THRESHOLD_THZ = -0.1
+
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, delta, fmax, output_dir, prefix="phonon_run"):
+   """
+   Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
+   This function is a core component used by both parameter sweep and soft mode optimization.
+   """
+   start_time = time.time()
+
+   # Ensure output directory exists
+   os.makedirs(output_dir, exist_ok=True)
+   print(f"\n--- Running Single Phonon Analysis in: {output_dir} ---")
+
+   # --- Step 1: Run Phonon Calculation ---
+   print("\n--- Step 1: Running Phonon Calculation ---")
+   ph = run_phonon_calculation(atoms, calculator, supercell_n, delta, output_dir)
+   if ph is None:
+      print("Error during phonon calculation setup.")
+      return None, None, None # Error during phonon calculation setup
+
+   # --- Step 2: Get and Process Phonon Results ---
+   print("\n--- Step 2: Getting and Processing Phonon Results ---")
+   bs, path, dos, bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, y_label, bsmin = get_phonon_results(ph, atoms, units)
+
+   # --- Step 3: Save Raw Data ---
+   print("\n--- Step 3: Saving Raw Data ---")
+   save_raw_data(bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, supercell_n, delta, fmax, output_dir)
+
+   # --- Step 4: Plot Results ---
+   print("\n--- Step 4: Plotting Results ---")
+   struct_formula = atoms.get_chemical_formula()
+   plot_phonon_results(bs_energies, dos, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, y_label, struct_formula, prefix, supercell_n, delta, fmax, output_dir)
+
+   # --- Step 5: Analyze Special Points and Softest Mode ---
+   print("\n--- Step 5: Analyzing Special Points and Softest Mode ---")
+   softest_mode_info = analyze_special_points_and_modes(
+      ph, bs, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir
+   )
+   # --- Step 6: Save comprehensive run details to a readable file ---
+   summary_filename = os.path.join(output_dir, f"{prefix}_phonon_run_summary.txt")  
+   with open(summary_filename, 'w') as f:  
+       f.write(f"--- Phonon Run Summary ---\n")  
+       f.write(f"Structure Formula: {atoms.get_chemical_formula()}\n")  
+       f.write(f"Total Number of Atoms: {len(atoms)}\n")  
+       f.write(f"Engine Used: {engine}\n")  
+       f.write(f"Units: {units}\n")  
+       f.write(f"Supercell Size (N,N,N): ({supercell_n}, {supercell_n}, {supercell_n})\n")  
+       f.write(f"Displacement Delta: {delta}\n")  
+       f.write(f"Fmax for Relaxation: {fmax}\n")  
+       f.write(f"Most Negative Frequency: {bsmin:.4f} {units}\n")  
+       f.write(f"Time Taken for Phonon Analysis: {time_taken:.2f} seconds\n\n")  
+  
+       # Add energy per atom (assuming it's available from a previous relaxation step or can be calculated)  
+       try:  
+           energy = atoms.get_potential_energy()  
+           energy_per_atom = energy / len(atoms)  
+           f.write(f"Energy of Structure: {energy:.6f} eV\n")  
+           f.write(f"Energy per Atom: {energy_per_atom:.6f} eV/atom\n\n")  
+       except Exception as e:  
+           f.write(f"Could not retrieve energy for this structure: {e}\n\n")  
+  
+       f.write("Path of K-points:\n")  
+       for i, (dist, label) in enumerate(zip(special_k_point_distances, special_k_point_labels)):  
+           f.write(f"  {label}: {dist:.4f}\n")  
+       f.write("\n")  
+  
+       # Attempt to read space group from the symmetry analysis file  
+       symmetry_file_path = os.path.join(output_dir, "relaxed_symmetry_analysis.txt") # Assuming relaxed structure was analyzed  
+       if not os.path.exists(symmetry_file_path):  
+           # If not found, try initial symmetry analysis file  
+           symmetry_file_path = os.path.join(output_dir, "initial_symmetry_analysis.txt")  
+  
+       if os.path.exists(symmetry_file_path):  
+           try:  
+               with open(symmetry_file_path, 'r') as sym_f:  
+                   sym_content = sym_f.read()  
+                   sg_number_line = next((line for line in sym_content.splitlines() if "Space group number:" in line), None)  
+                   sg_symbol_line = next((line for line in sym_content.splitlines() if "International symbol:" in line), None)  
+                   if sg_number_line:  
+                       f.write(f"{sg_number_line.strip()}\n")  
+                   if sg_symbol_line:  
+                       f.write(f"{sg_symbol_line.strip()}\n")  
+           except Exception as e:  
+               f.write(f"Could not read space group from symmetry analysis file: {e}\n")  
+       else:  
+           f.write("Space Group: Not available (symmetry analysis file not found).\n")  
+  
+   print(f"Comprehensive phonon run summary saved to: {summary_filename}")
+
+   end_time = time.time()
+   time_taken = end_time - start_time
+   print(f'Total time taken for this phonon analysis: {time_taken:.2f} s')
+
+   # Return softest_mode_info and the most negative frequency found in the band structure
+   return softest_mode_info, bsmin, time_taken
+
+
+def run_parameter_sweep_optimization(args, output_dir):
+   """
+   Runs the parameter sweep auto-optimization loop.
+   If a soft mode is found in the best configuration, it triggers the soft mode optimization.
+   """
+   print("Running in parameter sweep auto mode to find optimal settings...")
+   best_negative_frequency = -float('inf') # We want to find the LEAST negative (closest to zero or positive)
+   best_settings = {}
+   best_softest_mode_info = None # To store softest mode info for the best run
+   best_relaxed_atoms = None # To store the relaxed atoms for the best run
+
+   supercell_ns = [2, 3, 4]
+   deltas = [0.05, 0.03, 0.01]
+   fmax_values = [0.001, 0.0005, 0.0001]
+
+   if not (len(supercell_ns) == len(deltas) == len(fmax_values)):
+      print("Error: For --auto mode with sequential optimization, supercell_ns, deltas, and fmax_values lists must have the same length.")
+      sys.exit(1)
+
+   results = []
+   previous_best_negative_frequency = - float('inf')
+
+   # Load and potentially relax the initial structure once
+   print("\n--- Loading and potentially relaxing initial structure for parameter sweep ---")
+   struct, initial_atoms = load_structure(args.cif)
+   if struct is None or initial_atoms is None:
+       print("Failed to load initial structure.")
+       return None
+
+   calculator = initialize_calculator(args.engine)
+   if calculator is None:
+       print("Failed to initialize calculator.")
+       return None
+
+   relaxed_initial_atoms = initial_atoms.copy()
+   if not args.no_relax:
+       initial_relax_dir = os.path.join(output_dir, "initial_relaxation_for_sweep")
+       os.makedirs(initial_relax_dir, exist_ok=True)
+       relaxed_initial_atoms = relax_structure(initial_atoms.copy(), calculator, args.engine, args.fmax, initial_relax_dir, args.cif)
+       if relaxed_initial_atoms is None:
+           print("Initial relaxation failed. Exiting parameter sweep.")
+           return None
+   else:
+       print("Skipping initial structure relaxation for parameter sweep.")
+
+   original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
+
+   for i in range(len(supercell_ns)):
+      sc_n = supercell_ns[i]
+      d = deltas[i]
+      fm = fmax_values[i]
+
+      print(f"\n--- Testing Supercell N: {sc_n}, Delta: {d}, Fmax: {fm} ---")
+      current_output_dir = os.path.join(output_dir, f"N{sc_n}_D{d}_F{fm}")
+      os.makedirs(current_output_dir, exist_ok=True)
+
+      run_settings = vars(args).copy()
+      run_settings['supercell_n'] = sc_n
+      run_settings['delta'] = d
+      run_settings['fmax'] = fm
+      with open(os.path.join(current_output_dir, "run_settings.json"), 'w') as f:
+         json.dump(run_settings, f, indent=4)
+
+      # Call the unified phonon analysis function
+      softest_mode_info_current, neg_freq_at_special_point, time_taken = run_single_phonon_analysis(
+         relaxed_initial_atoms.copy(), calculator, args.engine, args.units, sc_n, d, fm, current_output_dir, prefix=original_prefix
+      )
+
+      if neg_freq_at_special_point is not None:
+         results.append({
+               "supercell_n": sc_n,
+               "delta": d,
+               "fmax": fm,
+               "negative_frequency_at_special_point": neg_freq_at_special_point,
+               "time_taken": time_taken
+         })
+
+         if neg_freq_at_special_point > best_negative_frequency:
+               best_negative_frequency = neg_freq_at_special_point
+               best_settings = {"supercell_n": sc_n, "delta": d, "fmax": fm}
+               best_softest_mode_info = softest_mode_info_current # Store the softest mode info
+               best_relaxed_atoms = relaxed_initial_atoms.copy() # Store the atoms object for the best run
+
+         if i > 0:
+               improvement = best_negative_frequency - previous_best_negative_frequency
+               improvement_threshold = NEGATIVE_PHONON_THRESHOLD_THZ # Use the base THz threshold
+               if args.units == "cm-1":
+                  improvement_threshold = NEGATIVE_PHONON_THRESHOLD_THZ * 33.35641
+               elif args.units == "eV":
+                  improvement_threshold = NEGATIVE_PHONON_THRESHOLD_THZ * 4.135667696e-3
+
+               # Note: We are looking for improvement, so a *larger* negative frequency is better (closer to zero)
+               # If the improvement is too small (i.e., current best is not significantly better than previous best)
+               if improvement < abs(improvement_threshold * 0.5): # Use a fraction of the threshold for early stopping
+                  print(f"Improvement in negative frequency ({improvement:.4f} {args.units}) is less than {abs(improvement_threshold * 0.5):.4f} {args.units}. Stopping parameter sweep.")
+                  break
+
+         previous_best_negative_frequency = best_negative_frequency
+
+   print("\n--- Parameter sweep auto-optimization complete ---")
+   print(f"Most negative frequency at a special point found: {best_negative_frequency:.4f} {args.units}")
+   print(f"Optimal settings: Supercell N = {best_settings.get('supercell_n')}, Delta = {best_settings.get('delta')}, Fmax = {best_settings.get('fmax')}")
+
+   with open(os.path.join(output_dir, "auto_results.json"), 'w') as f:
+      json.dump(results, f, indent=4)
+
+   # After parameter sweep, if a soft mode is still present, trigger the iterative soft mode optimization
+   # Convert threshold to current units for comparison
+   threshold_in_current_units = NEGATIVE_PHONON_THRESHOLD_THZ
+   if args.units == "cm-1":
+       threshold_in_current_units *= 33.35641
+   elif args.units == "eV":
+       threshold_in_current_units *= 4.135667696e-3
+
+   if best_negative_frequency < threshold_in_current_units and best_softest_mode_info is not None and best_relaxed_atoms is not None:
+       print(f"\nSoft mode detected ({best_negative_frequency:.4f} {args.units}) after parameter sweep. Initiating iterative soft mode optimization...")
+       # Pass the best relaxed atoms and its softest mode info to the iterative function
+       run_soft_mode_optimization(
+           args, # Pass all original arguments
+           output_dir,
+           best_relaxed_atoms, # The structure that had the soft mode
+           best_softest_mode_info # The softest mode info from that structure
+       )
+   else:
+       print("\nNo significant soft mode detected after parameter sweep, or structure is stable enough. Skipping iterative soft mode optimization.")
+
+   return best_settings
+
+
+def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mode_analysis, initial_softest_mode_info):
+    """
+    Runs the iterative soft mode displacement and relaxation workflow.
+
+    Args:
+        args (argparse.Namespace): Command line arguments.
+        base_output_dir (str): The main output directory for the entire run.
+        initial_atoms_for_soft_mode_analysis (ase.atoms.Atoms): The starting structure
+                                                                 (e.g., relaxed initial structure or best from sweep).
+        initial_softest_mode_info (dict): The softest mode information from the initial phonon analysis
+                                          of `initial_atoms_for_soft_mode_analysis`.
+    """
+    print("\n--- Running Soft Mode Iterative Optimization ---")
+    max_iterations = 3
+
+    # Define supercell variants based on cell symmetry
+    current_atoms = initial_atoms_for_soft_mode_analysis.copy()
+    cell = current_atoms.cell
+    lengths = np.linalg.norm(cell, axis=1)
+    angles = np.array([
+        np.arccos(np.dot(cell[1], cell[2] )/(lengths[1]*lengths[2])),
+        np.arccos(np.dot(cell[0], cell[2] )/(lengths[0]*lengths[2])),
+        np.arccos(np.dot(cell[0], cell[1] )/(lengths[0]*lengths[1]))
+    ])
+    
+    # Check if cell is cubic (all angles ~90° and all lengths equal)
+    is_cubic = (np.allclose(angles, np.pi/2, atol=1e-3) and 
+                np.allclose(lengths, lengths[0], rtol=1e-3))
+    
+    # Check if cell is tetragonal (all angles 90° and two equal lengths)
+    is_tetragonal = (np.allclose(angles, np.pi/2, atol=1e-3) and
+                    any(np.allclose(lengths[i], lengths[j], rtol=1e-3)
+                        for i, j in [(0,1), (1,2), (0,2)]))
+    
+    if is_cubic:
+        # For cubic, we only need unique combinations
+        supercell_variants = [(2,2,2), (2,2,1), (2,1,1)]
+    elif is_tetragonal:
+        # For tetragonal, we need more combinations but can still reduce
+        supercell_variants = [(2,2,2), (2,2,1), (2,1,2), (2,1,1)]
+    else:
+        # For lower symmetry, use all combinations
+        supercell_variants = [(2,1,1), (1,2,1), (1,1,2), 
+                            (2,2,1), (2,1,2), (1,2,2), 
+                            (2,2,2)]    # Exponentially increasing displacement scales
+    displacement_scales = np.exp(np.linspace(np.log(10), np.log(100), 5)).tolist() # From ~10 to 100 Angstrom max total displacement
+    # Exponentially increasing displacement scales
+    displacement_scales = [round(s, 3) for s in displacement_scales] # Round for cleaner filenames
+    print(f"Using displacement scales: {displacement_scales}")
+
+    num_top_structures_to_analyze = 3
+
+    current_atoms = initial_atoms_for_soft_mode_analysis.copy()
+    current_softest_mode_info = initial_softest_mode_info
+
+    calculator = initialize_calculator(args.engine)
+    if calculator is None:
+        print("Failed to initialize calculator for soft mode optimization. Exiting.")
+        return
+
+    original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
+
+    # Convert threshold from THz to current units
+    threshold_in_current_units = NEGATIVE_PHONON_THRESHOLD_THZ
+    if args.units == "cm-1":
+        threshold_in_current_units *= 33.35641
+    elif args.units == "eV":
+        threshold_in_current_units *= 4.135667696e-3
+
+    for iteration_idx in range(1, max_iterations + 1):
+        print(f"\n### Starting Soft Mode Iteration {iteration_idx} ###")
+
+        if current_softest_mode_info is None or 'raw_displacements' not in current_softest_mode_info:
+            print(f"No softest mode information available for iteration {iteration_idx}. Stopping.")
+            break
+
+        # Check if the frequency of the current softest mode is already above threshold
+        # This check is crucial for early stopping if the previous iteration already stabilized it.
+        if current_softest_mode_info['frequency'] >= threshold_in_current_units:
+            print(f"\nSoftest mode frequency ({current_softest_mode_info['frequency']:.4f} {args.units}) is already above the threshold ({threshold_in_current_units:.4f} {args.units}). Structure is considered stable enough. Stopping iterative optimization.")
+            break
+
+        print(f"Softest mode identified at {current_softest_mode_info.get('label', 'unknown')} with frequency {current_softest_mode_info['frequency']:.4f} {args.units}")
+
+
+        # --- Step 1: Generate Displaced Supercells ---
+        print(f"\n--- Iteration {iteration_idx}: Generating Displaced Supercells ---")
+        generated_cif_paths = generate_displaced_supercells(
+            current_atoms.copy(), # Use the current (primitive) structure as the base
+            current_softest_mode_info,
+            supercell_variants,
+            displacement_scales,
+            base_output_dir, # Use the main output directory
+            iteration_idx,
+            original_prefix
+        )
+
+        if not generated_cif_paths:
+            print(f"No displaced structures generated in iteration {iteration_idx}. Stopping.")
+            break
+
+        # --- Step 2: Relax Displaced Structures ---
+        print(f"\n--- Iteration {iteration_idx}: Relaxing Displaced Structures ---")
+        all_relaxation_results = []
+        supercell_folders = {}
+        for fpath in generated_cif_paths:
+            folder = os.path.dirname(fpath)
+            if folder not in supercell_folders:
+                supercell_folders[folder] = []
+            supercell_folders[folder].append(fpath)
+
+        for folder in supercell_folders:
+             folder_relaxation_results = relax_structures_in_folder(folder, calculator, args.engine, args.fmax)
+             all_relaxation_results.extend(folder_relaxation_results)
+
+        if not all_relaxation_results:
+            print(f"No structures were successfully relaxed in iteration {iteration_idx}. Stopping.")
+            break
+
+        # --- Step 3: Find Lowest Energy Structures ---
+        print(f"\n--- Iteration {iteration_idx}: Finding Lowest Energy Structures ---")
+        lowest_energy_structures = find_lowest_energy_structures(all_relaxation_results, num_to_select=num_top_structures_to_analyze)
+
+        if not lowest_energy_structures:
+            print(f"Could not find lowest energy structures in iteration {iteration_idx}. Stopping.")
+            break
+
+        # --- Step 4: Run Full Phonon Analysis on Top Structures ---
+        print(f"\n--- Iteration {iteration_idx}: Running Full Phonon Analysis on Top {len(lowest_energy_structures)} Structures ---")
+        best_neg_freq_in_top_structures = -float('inf') # Track the best frequency found in this iteration
+        best_atoms_for_next_iter = None
+        best_softest_mode_info_for_next_iter = None
+        stop_iterative_loop = False
+
+        for i, result in enumerate(lowest_energy_structures):
+            top_structure_relaxed_supercell_atoms = result['relaxed_atoms']
+            original_file_base = os.path.splitext(os.path.basename(result['original_file']))[0]
+
+            # Create a specific output directory for the phonon analysis of this top structure  
+            top_structure_phonon_dir = os.path.join(base_output_dir, f"soft_mode_iter_{iteration_idx}_top_structure_{i+1}_phonon_analysis")  
+            os.makedirs(top_structure_phonon_dir, exist_ok=True)  
+  
+            print(f"\nAnalyzing phonon for top structure {i+1} ({original_file_base})...")  
+  
+            # Find the primitive cell of the relaxed supercell structure for phonon analysis  
+            try:  
+                from pymatgen.symmetry.analyzer import SpacegroupAnalyzer  
+                from pymatgen.io.ase import AseAtomsAdaptor 
+                from ase.io import read, write
+ 
+  
+                pmg_structure = AseAtomsAdaptor.get_structure(top_structure_relaxed_supercell_atoms)  
+                analyzer = SpacegroupAnalyzer(pmg_structure)  
+                primitive_pmg = analyzer.get_primitive_standard_structure()  
+                primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(primitive_pmg)  
+                print(f"  Found primitive cell for relaxed structure ({len(primitive_atoms_for_phonon)} atoms).")  
+  
+                # --- NEW: Save the primitive_atoms_for_phonon to its phonon analysis folder ---  
+                primitive_cif_path = os.path.join(top_structure_phonon_dir, f"{original_prefix}_iter{iteration_idx}_top{i+1}_primitive.cif")  
+                write(primitive_cif_path, primitive_atoms_for_phonon)  
+                print(f"  Saved primitive structure for phonon analysis to: {primitive_cif_path}")
+
+                # Run phonon analysis on this primitive cell
+                # Use args.supercell_n and args.delta for the phonon calculation on this primitive cell
+                softest_mode_info_top, most_negative_freq_top, time_taken_top = run_single_phonon_analysis(
+                    primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units, args.supercell_n, args.delta, args.fmax, top_structure_phonon_dir, prefix=f"{original_prefix}_iter{iteration_idx}_top{i+1}_final_phonon"
+                )
+
+                if most_negative_freq_top is not None:
+                    # Save the final phonon analysis results with the requested naming convention
+                    final_output_filename_base = f"{original_prefix}_soft_mode_{iteration_idx}_{current_softest_mode_info.get('label', 'unknown')}_supercell_{original_file_base.split('supercell_')[1].split('/')[0]}_sufix"
+                    # The plot_phonon_results and save_raw_data functions already handle saving.
+                    # We just need to ensure the output directory is correct.
+                    # The prefix in run_single_phonon_analysis handles the naming.
+
+                    # Check if this structure is stable enough
+                    if most_negative_freq_top >= threshold_in_current_units:
+                        print(f"  Structure {original_file_base} is stable enough ({most_negative_freq_top:.4f} {args.units}).")
+                        stop_iterative_loop = True # Found a stable structure, stop the main loop
+
+                    # Keep track of the best (least negative) frequency among the top structures in this iteration
+                    if most_negative_freq_top > best_neg_freq_in_top_structures:
+                        best_neg_freq_in_top_structures = most_negative_freq_top
+                        best_atoms_for_next_iter = primitive_atoms_for_phonon.copy() # Store the primitive atoms of the best structure
+                        best_softest_mode_info_for_next_iter = softest_mode_info_top # Store its softest mode info
+
+            except Exception as e:
+                print(f"  Error finding primitive cell or running phonon analysis for {original_file_base}: {e}")
+                import traceback
+                traceback.print_exc()
+
+
+        # --- Step 5: Check Stopping Condition and Prepare for Next Iteration ---
+        if stop_iterative_loop:
+            print("\nStable structure found among the top candidates. Stopping iterative optimization.")
+            break # Exit the main iteration loop
+
+        if iteration_idx < max_iterations:
+            # If not stopping, prepare for the next iteration
+            if best_atoms_for_next_iter is not None and best_softest_mode_info_for_next_iter is not None:
+                print(f"\nIteration {iteration_idx} did not yield a stable structure.")
+                print(f"Proceeding to Iteration {iteration_idx + 1} using the softest mode from the best structure found in this iteration (frequency: {best_neg_freq_in_top_structures:.4f} {args.units}).")
+                current_atoms = best_atoms_for_next_iter.copy() # Use the primitive cell of the best structure as the starting point for the next iteration
+                current_softest_mode_info = best_softest_mode_info_for_next_iter # Use the softest mode from this best structure
+            else:
+                print(f"\nCould not identify a best structure or its softest mode for the next iteration. Stopping.")
+                break # Stop if we can't continue
+
+        else:
+            print(f"\nMaximum number of iterations ({max_iterations}) reached. Stopping iterative optimization.")
+
+    print("\n--- Soft Mode Iterative Optimization Complete ---")
+--- END FILE: {file_path} ---
+
+--- FILE: vibroml/utils/config.py ---
+# Explicit conversion factors
+EV_TO_THZ_FACTOR = 4.135667696e-3 # eV per THz
+THZ_TO_CM_FACTOR = 33.35641 # cm-1 per THz
+EV_TO_CM_FACTOR = 8065.544 # cm-1 per eV
+--- END FILE: {file_path} ---
+
+--- FILE: vibroml/utils/__init__.py ---
+
+--- END FILE: {file_path} ---
+
+--- FILE: vibroml/utils/phonon_utils.py ---
+# utils/phonon_utils.py
+import os
+import numpy as np
+from ase.phonons import Phonons
+# Ensure these imports are correct based on your project structure
+from .config import EV_TO_THZ_FACTOR, THZ_TO_CM_FACTOR, EV_TO_CM_FACTOR
+import json
+from math import pi, sqrt
+from ase.io import read, write
+from ase.atoms import Atoms # <--- ADD THIS IMPORT
+
+def run_phonon_calculation(atoms, calculator, supercell_n, delta, output_dir):
+   """Sets up and runs the phonon calculation."""
+   atoms.set_calculator(calculator) # Ensure calculator is set for phonon calculation
+
+   print("\n### Structure for Phonon Calculation ###")
+   print("   The phonon band structure will be calculated using the current structure.")
+   print(f"   Using supercell size: ({supercell_n}, {supercell_n}, {supercell_n})")
+   print(f"   Using displacement delta: {delta}")
+
+   # Phonon calculator
+   supercell = (supercell_n, supercell_n, supercell_n)
+   ph = Phonons(atoms, calculator, supercell=supercell, delta=delta)
+   ph.run()
+
+   # Read forces and assemble the dynamical matrix
+   ph.read(acoustic=True)
+   ph.clean()
+
+   print("Phonon calculation completed.")
+   return ph
+
+def get_phonon_results(ph, atoms, units):
+   """Gets band structure and DOS results and converts units."""
+   # Get the band path object
+   path = atoms.cell.bandpath(npoints=100) # Use default path or specify if needed
+
+   # Get band structure and DOS in default energy units (eV)
+   bs = ph.get_band_structure(path)
+   dos = ph.get_dos(kpts=(40, 40, 40)).sample_grid(npts=200, width=1e-4)
+
+   # Convert energies based on chosen units
+   if units == "THz":
+      bs_energies = bs.energies[0] / EV_TO_THZ_FACTOR # Access the first (and only) spin channel
+      dos_energies = dos.get_energies() / EV_TO_THZ_FACTOR
+      y_label = "Frequency (THz)"
+   elif units == "cm-1":
+      bs_energies = bs.energies[0] / EV_TO_THZ_FACTOR * THZ_TO_CM_FACTOR # Access the first (and only) spin channel
+      dos_energies = dos.get_energies() / EV_TO_THZ_FACTOR * THZ_TO_CM_FACTOR
+      y_label = "Frequency (cm⁻¹)"
+   elif units == "eV":
+      bs_energies = bs.energies[0] # Access the first (and only) spin channel
+      dos_energies = dos.get_energies()
+      y_label = "Energy (eV)"
+   else:
+      print(f"Warning: Unknown units '{units}'. Using eV.")
+      bs_energies = bs.energies[0] # Access the first (and only) spin channel
+      dos_energies = dos.get_energies()
+      y_label = "Energy (eV)"
+
+
+   # Correctly get k-point distances and labels for plotting
+   all_k_point_distances, special_k_point_distances, special_k_point_labels = bs.get_labels()
+
+   bsmin = np.min(bs_energies) if bs_energies.size > 0 else 0
+
+   print(f'Most negative frequency: {bsmin:.4f} {units}')
+
+   # Return bs and path objects as well for further analysis
+   return bs, path, dos, bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, y_label, bsmin
+
+def analyze_special_points_and_modes(ph, bs, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir, traj_kT=1):
+   """Analyzes frequencies at special points and identifies the softest mode.
+
+   Args:
+      ph (ase.phonons.Phonons): The Phonons object.
+      bs (ase.spectrum.band_structure.BandStructure): The BandStructure object.
+      path (ase.dft.kpoints.BandPath): The BandPath object.
+      bs_energies (np.ndarray): The phonon band energies (frequencies).
+      special_k_point_distances (list): Distances of special k-points.
+      special_k_point_labels (list): Labels of special k-points.
+      units (str): Units for frequencies (e.g., "THz", "cm-1").
+      output_dir (str): Directory to save output files.
+      traj_kT (float): Temperature for trajectory generation (default 0.1).
+   """
+   print("\n--- Analyzing Special K-points ---")
+
+   special_point_analysis = []
+   most_negative_freq = float('inf')
+   softest_mode_info = None
+
+   special_point_coords = path.special_points # Dictionary mapping label to coordinate
+
+   for label, distance in zip(special_k_point_labels, special_k_point_distances):
+      coord = special_point_coords.get(label)
+      if coord is None:
+         print(f"Warning: Could not find coordinate for special point label '{label}'. Skipping.")
+         continue
+
+      # Find the index in path.kpts that matches this coordinate
+      kpt_index = None
+      for i, kpt in enumerate(path.kpts):
+         if np.allclose(kpt, coord):
+               kpt_index = i
+               break
+
+      if kpt_index is None:
+            print(f"Warning: Could not find k-point index for coordinate {coord} (label '{label}'). Skipping.")
+            continue
+
+      # Get frequencies at this k-point index
+      freqs_at_kpt = bs_energies[kpt_index]
+
+      # Find the minimum frequency and its band index at this k-point
+      min_freq_at_kpt = np.min(freqs_at_kpt)
+      min_band_index_at_kpt = np.argmin(freqs_at_kpt)
+
+      print(f"   Special Point: {label} ({coord[0]:.4f}, {coord[1]:.4f}, {coord[2]:.4f}) - Minimum Frequency: {min_freq_at_kpt:.4f} {units}")
+
+      special_point_analysis.append({
+         "label": label,
+         "coordinate": [float(c) for c in coord], # Convert numpy array to list for JSON
+         "min_frequency": float(min_freq_at_kpt),
+         "band_index": int(min_band_index_at_kpt)
+      })
+
+      # Check if this is the most negative frequency found so far
+      if min_freq_at_kpt < most_negative_freq:
+         most_negative_freq = min_freq_at_kpt
+         softest_mode_info = {
+               "label": label,
+               "coordinate": [float(c) for c in coord],
+               "frequency": float(min_freq_at_kpt),
+               "band_index": int(min_band_index_at_kpt),
+               "kpoint_index_in_path": int(kpt_index) # Store index in path.kpts
+         }
+
+   # Save special point analysis
+   analysis_filename = os.path.join(output_dir, "special_point_analysis.json")
+   with open(analysis_filename, 'w') as f:
+      json.dump(special_point_analysis, f, indent=4)
+   print(f"\nSpecial point analysis saved to {analysis_filename}")
+
+   # Report the most negative special point and get displacements
+   if softest_mode_info:
+      print("\n--- Softest Mode Analysis ---")
+      print(f"Most negative frequency found at a special point:")
+      print(f"   Label: {softest_mode_info['label']}")
+      print(f"   Coordinate: ({softest_mode_info['coordinate'][0]:.4f}, {softest_mode_info['coordinate'][1]:.4f}, {softest_mode_info['coordinate'][2]:.4f})")
+      print(f"   Frequency: {softest_mode_info['frequency']:.4f} {units}")
+      print(f"   Band Index: {softest_mode_info['band_index']}")
+
+      try:
+         # q_c is the k-point coordinate for the softest mode
+         q_c = np.array(softest_mode_info['coordinate'])
+         band_index = softest_mode_info['band_index']
+
+         # Call ph.band_structure to get frequencies and eigenvectors for this specific k-point
+         # The result is (omega_l, u_l) where omega_l is (1, num_branches) and u_l is (1, num_branches, num_atoms_primitive * 3)
+         omega_at_q, u_at_q = ph.band_structure([q_c], modes=True)
+
+         # Extract the eigenvector for the specific band_index
+         # u_at_q[0] gives (num_branches, num_atoms_primitive * 3)
+         # u_at_q[0, band_index] gives the 1D eigenvector for that mode
+         eigenvector = u_at_q[0, band_index].real # Take the real part for displacements
+
+         # Reshape the eigenvector into (num_atoms, 3) for displacements
+         num_atoms_primitive = len(ph.atoms) # Number of atoms in the primitive cell used by Phonons object
+         raw_displacements = eigenvector.reshape(num_atoms_primitive, 3)
+
+         # Store the raw displacements in softest_mode_info
+         softest_mode_info['raw_displacements'] = raw_displacements.tolist() # Convert to list for JSON
+
+         # Normalize displacements for better visualization if needed (e.g., to max 0.5 Å)
+         max_disp_magnitude = np.max(np.linalg.norm(raw_displacements, axis=1))
+         if max_disp_magnitude > 1e-6: # Avoid division by zero
+               scaled_displacements_for_viz = raw_displacements / max_disp_magnitude * 0.5 # Scale to a reasonable amplitude, e.g., 0.5 Å
+         else:
+               scaled_displacements_for_viz = raw_displacements # No scaling if magnitude is zero
+
+         print("\nDisplacements for the softest mode (in primitive cell coordinates, scaled for visualization):")
+         primitive_atoms = ph.atoms # This is the primitive cell used by the Phonons object
+         for i, (atom, disp) in enumerate(zip(primitive_atoms, scaled_displacements_for_viz)):
+               print(f"   Atom {i+1} ({atom.symbol}): dx={disp[0]:.6f}, dy={disp[1]:.6f}, dz={disp[2]:.6f} Å")
+
+         # Save displacements to a file
+         displacements_filename = os.path.join(output_dir, "softest_mode_displacements.txt")
+         with open(displacements_filename, 'w') as f:
+               f.write(f"Softest mode at special point {softest_mode_info['label']} ({softest_mode_info['coordinate']})\n")
+               f.write(f"Frequency: {softest_mode_info['frequency']:.4f} {units}\n")
+               f.write(f"Band Index: {softest_mode_info['band_index']}\n\n")
+               f.write("Displacements (in primitive cell coordinates, scaled for visualization):\n")
+               primitive_atoms = ph.atoms
+               for i, (atom, disp) in enumerate(zip(primitive_atoms, scaled_displacements_for_viz)):
+                  f.write(f"Atom {i+1} ({atom.symbol}): dx={disp[0]:.6f}, dy={disp[1]:.6f}, dz={disp[2]:.6f} Å\n")
+         print(f"Softest mode displacements saved to {displacements_filename}")
+
+         # --- Generate .traj file ---
+         original_ph_name = ph.name
+         ph.name = os.path.join(output_dir, f"softest_mode_{softest_mode_info['label']}_band{band_index}")
+         ph.write_modes(
+               q_c,
+               branches=[band_index],
+               kT=traj_kT,
+               repeat=(2, 2, 2),
+               center=True
+         )
+         traj_filename_generated = f"{ph.name}.mode.{band_index}.traj"
+         print(f"Softest mode animation (ASE .traj) saved to {traj_filename_generated}")
+         ph.name = original_ph_name # Restore original ph.name
+
+         # --- NEW: Convert the generated .traj file to .xyz ---
+         xyz_filename = os.path.join(output_dir, f"softest_mode_{softest_mode_info['label']}_band{band_index}.xyz")
+         try:
+               # Read the trajectory from the .traj file
+               frames = read(traj_filename_generated, index=':') # Read all frames
+               # Write to XYZ format
+               write(xyz_filename, frames)
+               print(f"Converted trajectory to XYZ: {xyz_filename}")
+         except Exception as e:
+               print(f"Error converting trajectory to XYZ: {e}")
+               import traceback
+               traceback.print_exc()
+
+
+      except Exception as e:
+         print(f"Error retrieving softest mode displacements or writing trajectory: {e}")
+         import traceback
+         traceback.print_exc()
+
+   else:
+      print("\nNo special points found or analyzed.")
+
+   # Return the softest mode info dictionary
+   return softest_mode_info
+
+--- END FILE: {file_path} ---
+
+--- FILE: vibroml/utils/plotting_utils.py ---
+import matplotlib.pyplot as plt
+import os
+import numpy as np
+
+def plot_phonon_results(bs_energies, dos, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, y_label, struct_formula, cif_filename_base, supercell_n, delta, fmax, output_dir):
+   """Generates and saves the phonon band structure and DOS plot."""
+   plt.rc("figure", dpi=150)
+
+   fig = plt.figure(1, figsize=(7, 4))
+   bs_ax = fig.add_axes([0.12, 0.07, 0.67, 0.85])
+
+   bsmin = np.min(bs_energies) if bs_energies.size > 0 else 0
+   bsmax = np.max(bs_energies) if bs_energies.size > 0 else 0
+
+   y_range = bsmax - bsmin
+   extra_space = y_range * 0.20
+   y_bottom = bsmin - extra_space
+   y_top = bsmax + extra_space
+
+   for band in bs_energies.T:
+      bs_ax.plot(all_k_point_distances, band, color='blue')
+
+   for dist in special_k_point_distances:
+      bs_ax.axvline(dist, color='gray', linestyle='--')
+
+   bs_ax.set_xticks(special_k_point_distances)
+   bs_ax.set_xticklabels(special_k_point_labels)
+   bs_ax.set_xlabel("Wave vector", fontsize=14)
+   bs_ax.set_ylabel(y_label, fontsize=14)
+
+   bs_ax.set_xlim(all_k_point_distances.min(), all_k_point_distances.max())
+   bs_ax.set_ylim(y_bottom, y_top)
+
+   dos_ax = fig.add_axes([0.8, 0.07, 0.17, 0.85])
+   dos_ax.fill_between(dos.get_weights(), dos_energies, y2=0, color="grey", edgecolor="black", lw=1)
+
+   dos_ax.set_ylim(y_bottom, y_top)
+   dos_ax.set_yticks([])
+   dos_ax.set_xticks([])
+   dos_ax.set_xlabel("DOS", fontsize=14)
+
+   fig.suptitle(
+      f"Phonon band structure and DOS of {struct_formula} ({cif_filename_base}) with ({supercell_n}, {supercell_n}, {supercell_n}) supercell",
+      fontsize=12,
+      y=1.02,
+   )
+
+   plot_filename_png = os.path.join(output_dir, f"phonon_bs_dos_{cif_filename_base}_N{supercell_n}_D{delta}_F{fmax}.png")
+   plot_filename_svg = os.path.join(output_dir, f"phonon_bs_dos_{cif_filename_base}_N{supercell_n}_D{delta}_F{fmax}.svg")
+   plt.savefig(plot_filename_png, dpi=300, bbox_inches="tight")
+   plt.savefig(plot_filename_svg, bbox_inches="tight")
+   plt.close(fig) # Close the figure to free up memory
+
+   print(f"Phonon band structure and DOS plot saved to {plot_filename_png} and {plot_filename_svg}")
+
+def save_raw_data(bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, supercell_n, delta, fmax, output_dir):
+   """Saves raw band structure and DOS data to text files."""
+   # Reshape bs_energies to 2D before saving
+   # Assuming bs_energies shape is (num_k_points, num_bands, num_spin_channels)
+   # We want to flatten the last dimension into the second, resulting in (num_k_points, num_bands * num_spin_channels)
+   bs_energies_2d = bs_energies.reshape(bs_energies.shape[0], -1)
+   np.savetxt(os.path.join(output_dir, f"band_structure_energies_N{supercell_n}_D{delta}_F{fmax}.txt"), bs_energies_2d)
+
+   np.savetxt(os.path.join(output_dir, f"dos_energies_N{supercell_n}_D{delta}_F{fmax}.txt"), dos_energies)
+   np.savetxt(os.path.join(output_dir, f"k_point_distances_N{supercell_n}_D{delta}_F{fmax}.txt"), all_k_point_distances)
+
+   with open(os.path.join(output_dir, f"special_k_points_N{supercell_n}_D{delta}_F{fmax}.txt"), 'w') as f:
+      f.write("Special K-point Distances:\n")
+      for dist in special_k_point_distances:
+         f.write(f"{dist}\n")
+      f.write("\nSpecial K-point Labels:\n")
+      for label in special_k_point_labels:
+         f.write(f"{label}\n")
+
+   print("Raw band structure and DOS data saved.")
+--- END FILE: {file_path} ---
+
+--- FILE: vibroml/utils/relaxation_utils.py ---
+import os
+import time
+from ase.constraints import UnitCellFilter
+from ase.optimize import BFGS
+from m3gnet.models import Relaxer
+from pymatgen.io.ase import AseAtomsAdaptor
+from .structure_utils import print_final_structure_info, save_relaxed_structure
+from ase.io import read, write
+from ase.calculators.calculator import Calculator
+import numpy as np
+
+import spglib
+from pymatgen.core import Structure
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+
+
+def relax_structure(atoms, calculator, engine, fmax, output_dir, original_cif_path):
+   """Performs structure relaxation using the specified engine."""
+   print(f"\n» {engine.upper()} relaxation starting…")
+   start_time = time.time()
+
+   initial_atoms = atoms.copy()
+
+   print("\n--- Analyzing Initial Structure Symmetry ---")
+   analyze_symmetry(initial_atoms, output_dir, prefix="initial", auto_tune_symprec=True)
+   print("------------------------------------------")
+
+   atoms.set_calculator(calculator)
+
+   initial_stress = None
+   initial_energy = None
+   initial_energy_per_atom = None
+   try:
+      initial_stress = atoms.get_stress()
+      initial_energy = atoms.get_potential_energy()
+      initial_energy_per_atom = initial_energy / len(atoms)
+      print(f"   Initial energy: {initial_energy:.6f} eV")
+      print(f"   Initial energy per atom: {initial_energy_per_atom:.6f} eV/atom")
+   except Exception as e:
+      print(f"\n   Could not retrieve initial energy/stress: {e}")
+
+   relaxed_atoms = None
+   relax_traj_path = os.path.join(output_dir, "relax.traj")
+
+   if engine == "mace":
+      ucf = UnitCellFilter(atoms)
+      relax_log_path = os.path.join(output_dir, "relax.log")
+      print(f"   MACE relaxation log will be written to: {relax_log_path}")
+      print(f"   MACE relaxation trajectory will be written to: {relax_traj_path}")
+      opt = BFGS(ucf, logfile=relax_log_path, trajectory=relax_traj_path)
+      opt.run(fmax=fmax, steps=100)
+      relaxed_atoms = ucf.atoms.copy()
+   elif engine == "m3gnet":
+      relaxer = Relaxer()
+      print(f"   M3GNet relaxation will generate a trajectory at: {relax_traj_path}")
+      relax_results = relaxer.relax(atoms, fmax=fmax, verbose=True)
+
+      relaxed_atoms = AseAtomsAdaptor().get_atoms(relax_results['final_structure'])
+
+      if 'trajectory' in relax_results and relax_results['trajectory']:
+          ase_trajectory_atoms = [AseAtomsAdaptor().get_atoms(s) for s in relax_results['trajectory']]
+          if not np.allclose(ase_trajectory_atoms[0].positions, initial_atoms.positions):
+              ase_trajectory_atoms.insert(0, initial_atoms)
+          if not np.allclose(ase_trajectory_atoms[-1].positions, relaxed_atoms.positions):
+              ase_trajectory_atoms.append(relaxed_atoms)
+
+          try:
+              write(relax_traj_path, ase_trajectory_atoms)
+              print(f"   M3GNet relaxation trajectory saved to {relax_traj_path}")
+          except Exception as e:
+              print(f"   Error writing M3GNet trajectory: {e}")
+              import traceback
+              traceback.print_exc()
+      else:
+          print("   No intermediate trajectory frames found for M3GNet relaxation.")
+          try:
+              write(relax_traj_path, [initial_atoms, relaxed_atoms])
+              print(f"   M3GNet relaxation trajectory (initial + final) saved to {relax_traj_path}")
+          except Exception as e:
+              print(f"   Error writing M3GNet initial/final trajectory: {e}")
+              import traceback
+              traceback.print_exc()
+
+   end_time = time.time()
+   print(f"» {engine.upper()} relaxation finished in {end_time - start_time:.2f} seconds.")
+
+   relaxed_atoms.set_calculator(calculator)
+   final_stress = None
+   final_energy = None
+   final_energy_per_atom = None
+   try:
+      final_stress = relaxed_atoms.get_stress()
+      final_energy = relaxed_atoms.get_potential_energy()
+      final_energy_per_atom = final_energy / len(relaxed_atoms)
+      print(f"   Final energy: {final_energy:.6f} eV")
+      print(f"   Final energy per atom: {final_energy_per_atom:.6f} eV/atom")
+   except Exception as e:
+      print(f"\n   Could not retrieve final stress after relaxation: {e}")
+
+   # Save energy information to file
+   energy_info_path = os.path.join(output_dir, "energy_info.txt")
+   with open(energy_info_path, 'w') as f:
+       f.write("=== Energy Information ===\n")
+       f.write(f"Number of atoms: {len(relaxed_atoms)}\n")
+       if initial_energy is not None:
+           f.write(f"Initial energy: {initial_energy:.6f} eV\n")
+           f.write(f"Initial energy per atom: {initial_energy_per_atom:.6f} eV/atom\n")
+       if final_energy is not None:
+           f.write(f"Final energy: {final_energy:.6f} eV\n")
+           f.write(f"Final energy per atom: {final_energy_per_atom:.6f} eV/atom\n")
+       if initial_energy is not None and final_energy is not None:
+           energy_change = final_energy - initial_energy
+           energy_change_per_atom = energy_change / len(relaxed_atoms)
+           f.write(f"Energy change: {energy_change:.6f} eV\n")
+           f.write(f"Energy change per atom: {energy_change_per_atom:.6f} eV/atom\n")
+
+
+   print_final_structure_info(initial_atoms, relaxed_atoms, initial_stress, final_stress)
+   save_relaxed_structure(relaxed_atoms, original_cif_path, engine, fmax, output_dir)
+
+   relax_xyz_path = os.path.join(output_dir, "relax.xyz")
+   try:
+       frames = read(relax_traj_path, index=':')
+       write(relax_xyz_path, frames)
+       print(f"Converted relaxation trajectory to XYZ: {relax_xyz_path}")
+   except Exception as e:
+       print(f"Error converting relaxation trajectory to XYZ: {e}")
+       import traceback
+       traceback.print_exc()
+
+   print("\nStructure relaxed.")
+
+   print("\n--- Analyzing Relaxed Structure Symmetry ---")
+   analyze_symmetry(relaxed_atoms, output_dir, prefix="relaxed", auto_tune_symprec=True)
+   print("------------------------------------------")
+
+   return relaxed_atoms
+
+def relax_structures_in_folder(folder_path: str, calculator: Calculator, engine: str, fmax: float):    
+   """    
+   Relaxes all CIF structures found in a given folder and outputs a summary file.    
+  
+   Args:    
+      folder_path (str): Path to the folder containing CIF files.    
+      calculator (ase.calculators.calculator.Calculator): The ASE calculator to use.    
+      engine (str): Name of the calculation engine.    
+      fmax (float): Maximum force tolerance for relaxation.    
+  
+   Returns:    
+      list: A list of dictionaries, each containing original_file, energy, and relaxed_atoms.    
+   """    
+   print(f"\n--- Relaxing structures in folder: {folder_path} ---")    
+   relaxation_results = []    
+   cif_files = [f for f in os.listdir(folder_path) if f.endswith(".cif")]    
+  
+   if not cif_files:    
+      print(f"No CIF files found in {folder_path}.")    
+      return []    
+  
+   summary_filepath = os.path.join(folder_path, "relaxation_summary.txt")  
+   with open(summary_filepath, 'w') as summary_f:  
+      summary_f.write(f"--- Relaxation Summary for Folder: {folder_path} ---\n")  
+      summary_f.write(f"Analysis Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")  
+  
+      for cif_file in cif_files:    
+         original_filepath = os.path.join(folder_path, cif_file)    
+         print(f"  Relaxing {cif_file}...")    
+         summary_f.write(f"### Structure: {cif_file} ###\n")  
+         summary_f.write(f"Original File: {original_filepath}\n")  
+         summary_f.write(f"Total Number of Atoms: {len(atoms)}\n")
+         try:    
+            # Load the structure    
+            atoms = read(original_filepath)    
+            atoms.set_calculator(calculator) # Ensure calculator is set    
+  
+            # Define the optimizer with UnitCellFilter for cell relaxation  
+            log_filename = cif_file.replace(".cif", "_relaxation.log")    
+            traj_filename = cif_file.replace(".cif", "_relaxation.traj")    
+            ucf = UnitCellFilter(atoms)  
+            optimizer = BFGS(ucf, logfile=os.path.join(folder_path, log_filename), trajectory=os.path.join(folder_path, traj_filename))    
+  
+            # Run the optimization    
+            optimizer.run(fmax=fmax)    
+            print(f"  Relaxation of {cif_file} completed.")    
+  
+            # Get the final energy    
+            energy = atoms.get_potential_energy()    
+            energy_per_atom = energy / len(atoms)  
+            print(f"  Final energy: {energy:.4f} eV")   
+            print(f"  Final energy per atom: {energy_per_atom:.6f} eV/atom")   
+  
+            summary_f.write(f"Relaxation Status: SUCCESS\n")  
+            summary_f.write(f"Final Energy: {energy:.6f} eV\n")  
+            summary_f.write(f"Final Energy per Atom: {energy_per_atom:.6f} eV/atom\n")  
+  
+            # Save the relaxed structure (optional, can overwrite or save with suffix)    
+            relaxed_filepath = original_filepath.replace(".cif", "_relaxed.cif")    
+            write(relaxed_filepath, atoms)    
+            print(f"  Relaxed structure saved to {relaxed_filepath}")    
+            summary_f.write(f"Relaxed File: {relaxed_filepath}\n")  
+  
+            cif_results = {    
+                  'original_file': original_filepath,    
+                  'relaxed_file': relaxed_filepath,    
+                  'energy': energy,    
+                  'energy_per_atom': energy_per_atom,  
+                  'relaxed_atoms': atoms.copy() # Store a copy of the relaxed atoms    
+            }  
+            relaxation_results.append(cif_results)    
+              
+            # Perform symmetry analysis for the relaxed structure  
+            summary_f.write("\n  --- Relaxed Structure Symmetry Analysis ---\n")  
+            cell = (atoms.get_cell(), atoms.get_scaled_positions(), atoms.get_atomic_numbers())  
+              
+            # Auto-tune symprec for symmetry analysis  
+            symprec = 1e-3 # Default  
+            symprec_values = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]  
+            best_spacegroup_num = 0  
+            best_symprec_found = symprec  
+            best_dataset = None  
+  
+            for test_symprec in symprec_values:  
+                dataset = spglib.get_symmetry_dataset(cell, symprec=test_symprec)  
+                if dataset and dataset['number'] > best_spacegroup_num:  
+                    best_spacegroup_num = dataset['number']  
+                    best_symprec_found = test_symprec  
+                    best_dataset = dataset  
+              
+            if best_dataset:  
+                summary_f.write(f"  Symmetry Precision (Auto-tuned): {best_symprec_found:.4e}\n")  
+                summary_f.write(f"  Space Group Number: {best_dataset['number']}\n")  
+                summary_f.write(f"  International Symbol: {best_dataset['international']}\n")  
+                summary_f.write(f"  Hall Symbol: {best_dataset['hall']}\n")  
+                summary_f.write(f"  Point Group Symbol: {best_dataset['pointgroup']}\n")  
+                  
+                # Try to get crystal system using Pymatgen  
+                crystal_system = "N/A"  
+                try:  
+                    pmg_structure = AseAtomsAdaptor().get_structure(atoms)  
+                    sga = SpacegroupAnalyzer(pmg_structure, symprec=best_symprec_found)  
+                    crystal_system = sga.get_crystal_system()  
+                except Exception as e:  
+                    summary_f.write(f"  Warning: Could not determine crystal system using Pymatgen: {e}\n")  
+                summary_f.write(f"  Crystal System: {crystal_system}\n")  
+                  
+                if 'lattice_type' in best_dataset:  
+                    summary_f.write(f"  Lattice Type: {best_dataset['lattice_type']}\n")  
+                else:  
+                    summary_f.write("  Lattice Type: Not directly available from spglib dataset\n")  
+                  
+                summary_f.write(f"  Number of atoms in primitive cell: {len(best_dataset['std_types'])}\n")  
+                summary_f.write(f"  Transformation matrix to primitive cell:\n{np.array2string(best_dataset['transformation_matrix'], separator=', ')}\n")  
+                summary_f.write(f"  Origin shift: {np.array2string(best_dataset['origin_shift'], separator=', ')}\n")  
+            else:  
+                summary_f.write("  No symmetry found for the relaxed structure at any tested precision.\n")  
+            summary_f.write("  -------------------------------------------\n\n")  
+  
+         except Exception as e:    
+            print(f"  Error relaxing {cif_file}: {e}")    
+            summary_f.write(f"Relaxation Status: FAILED\n")  
+            summary_f.write(f"Error: {e}\n\n")  
+            # Optionally, store error info or skip this structure    
+  
+      print(f"Finished relaxing structures in {folder_path}.")    
+      print(f"Detailed relaxation summary saved to: {summary_filepath}")  
+   return relaxation_results
+
+def find_lowest_energy_structures(all_relaxation_results: list, num_to_select: int = 3):  
+   """  
+   Finds the structures with the lowest energies from a list of relaxation results.  
+
+   Args:  
+      all_relaxation_results (list): A list of dictionaries from relax_structures_in_folder.  
+      num_to_select (int): The number of lowest energy structures to select.  
+
+   Returns:  
+      list: A list of the top num_to_select relaxation result dictionaries, sorted by energy.  
+   """  
+   print(f"\n--- Finding the {num_to_select} lowest energy structures ---")  
+
+   if not all_relaxation_results:  
+      print("No relaxation results available.")  
+      return []  
+
+   # Sort the results by energy  
+   sorted_results = sorted(all_relaxation_results, key=lambda x: x['energy_per_atom'])  
+
+   # Select the top N  
+   lowest_energy_structures = sorted_results[:num_to_select]  
+
+   print("Top lowest energy structures found:")  
+   for i, result in enumerate(lowest_energy_structures):  
+      print(f"  {i+1}. Energy per atom: {result['energy_per_atom']:.4f} eV/atom, File: {os.path.basename(result['original_file'])}")  
+
+   return lowest_energy_structures
+
+
+def analyze_symmetry(atoms, output_dir, prefix="", symprec=1e-3, auto_tune_symprec=False):
+    """
+    Analyzes the symmetry of an ASE Atoms object using spglib and saves the results to a file.
+    Can optionally auto-tune symprec to find the highest symmetry.
+
+    Args:
+        atoms (ase.Atoms): The ASE Atoms object to analyze.
+        output_dir (str): The directory to save the symmetry analysis file.
+        prefix (str): A prefix for the output filename (e.g., "initial", "relaxed").
+        symprec (float): Symmetry precision for a single run, or starting point for auto-tuning.
+        auto_tune_symprec (bool): If True, attempts to find the highest symmetry by varying symprec.
+    """
+    print(f"\n» Analyzing {prefix} structure symmetry with spglib…")
+
+    cell = atoms.get_cell()
+    numbers = atoms.get_atomic_numbers()
+    positions = atoms.get_scaled_positions()
+
+    filename = f"{prefix}_symmetry_analysis.txt" if prefix else "symmetry_analysis.txt"
+    symmetry_file_path = os.path.join(output_dir, filename)
+
+    best_dataset = None
+    best_symprec = symprec
+    
+    symprec_values_to_check = [1e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2]
+
+    if auto_tune_symprec:
+        print(f"   Attempting to auto-tune symprec to find highest symmetry...")
+        
+        found_symmetries = []
+        for current_symprec in symprec_values_to_check:
+            dataset = spglib.get_symmetry_dataset((cell, positions, numbers), symprec=current_symprec)
+            if dataset:
+                found_symmetries.append((dataset['number'], current_symprec, dataset))
+        
+        if found_symmetries:
+            found_symmetries.sort(key=lambda x: (x[0], x[1]))
+            best_dataset = found_symmetries[0][2]
+            best_symprec = found_symmetries[0][1]
+            print(f"   Highest symmetry found (Space Group {best_dataset['number']}) at symprec = {best_symprec:.4e}")
+        else:
+            print("   No symmetry found across the tested symprec range.")
+            best_dataset = None
+            best_symprec = None
+    else:
+        best_dataset = spglib.get_symmetry_dataset((cell, positions, numbers), symprec=symprec)
+        best_symprec = symprec
+
+    # --- DEBUGGING: Print available keys/attributes of best_dataset ---
+    print("\n--- DEBUG: Contents of best_dataset ---")
+    if best_dataset:
+        if isinstance(best_dataset, dict):
+            print("best_dataset is a dictionary. Keys available:")
+            for key in best_dataset.keys():
+                print(f"  - {key}")
+            print("Full dictionary:")
+            print(best_dataset)
+        else:
+            print("best_dataset is an object. Attempting to list attributes:")
+            print(dir(best_dataset))
+            print("Attempting to convert to dict (if it's a dataclass):")
+            try:
+                import dataclasses
+                print(dataclasses.asdict(best_dataset))
+            except Exception as e:
+                print(f"  Could not convert to dict: {e}")
+    else:
+        print("best_dataset is None (no symmetry found).")
+    print("---------------------------------------")
+    # --- END DEBUGGING ---
+
+
+    crystal_system = "N/A"
+    if best_dataset:
+        try:
+            pmg_structure = AseAtomsAdaptor().get_structure(atoms)
+            sga = SpacegroupAnalyzer(pmg_structure, symprec=best_symprec)
+            crystal_system = sga.get_crystal_system()
+        except Exception as e:
+            print(f"   Warning: Could not determine crystal system using Pymatgen: {e}")
+            crystal_system = "Error"
+
+
+    with open(symmetry_file_path, 'w') as f:
+        f.write(f"### {prefix.capitalize()} Structure Symmetry Analysis ###\n\n")
+        f.write(f"Analysis Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        
+        if auto_tune_symprec:
+            f.write(f"Symmetry Precision (symprec) - Auto-tuned: {best_symprec:.4e}\n")
+            f.write(f"Symprec values checked: {', '.join([f'{s:.1e}' for s in symprec_values_to_check])}\n\n")
+        else:
+            f.write(f"Symmetry Precision (symprec): {symprec:.4e}\n\n")
+
+
+        if best_dataset:
+            f.write(f"Space group number: {best_dataset['number']}\n")
+            f.write(f"International symbol: {best_dataset['international']}\n")
+            f.write(f"Hall symbol: {best_dataset['hall']}\n")
+            f.write(f"Point group symbol: {best_dataset['pointgroup']}\n")
+            f.write(f"Crystal system: {crystal_system}\n")
+            # --- COMMENTED OUT THE PROBLEMATIC LINE FOR NOW ---
+            # f.write(f"Lattice type: {best_dataset['lattice_type']}\n")
+            
+            # --- NEW: Add a placeholder or conditional write for lattice_type ---
+            # We will re-enable this once we know the correct key or method
+            if 'lattice_type' in best_dataset: # Check if the key exists
+                f.write(f"Lattice type: {best_dataset['lattice_type']}\n")
+            else:
+                f.write("Lattice type: Not directly available from spglib dataset (check debug output for alternatives)\n")
+
+
+            f.write(f"Number of atoms in primitive cell: {len(best_dataset['std_types'])}\n")
+            f.write(f"Transformation matrix to primitive cell:\n{np.array2string(best_dataset['transformation_matrix'], separator=', ')}\n")
+            f.write(f"Origin shift: {np.array2string(best_dataset['origin_shift'], separator=', ')}\n")
+            print(f"   {prefix.capitalize()} symmetry analysis saved to: {symmetry_file_path}")
+        else:
+            f.write("Could not determine symmetry for any tested symprec value.\n")
+            print(f"   Could not determine {prefix} symmetry for any tested symprec value.")
+
+    print(f"» {prefix.capitalize()} symmetry analysis complete.")
+--- END FILE: {file_path} ---
+
+--- FILE: vibroml/utils/structure_utils.py ---
+import os
+import sys
+from pymatgen.io.ase import AseAtomsAdaptor
+from pymatgen.core import Structure
+from m3gnet.models import M3GNet, M3GNetCalculator, Potential
+import numpy as np
+from .utils import HAVE_MACE, get_mace_device, mace_mp
+from ase.build import make_supercell 
+from ase.io import read, write
+from ase.atoms import Atoms
+
+def load_structure(cif_path):
+   """Loads a structure from a CIF file and converts it to an ASE Atoms object."""
+   try:
+      struct = Structure.from_file(cif_path)
+      atoms = AseAtomsAdaptor().get_atoms(struct)
+      print(f"Successfully loaded structure from {cif_path}")
+      return struct, atoms
+   except Exception as e:
+      print(f"Error reading CIF file {cif_path}: {e}")
+      return None, None
+
+def initialize_calculator(engine):
+   """Initializes and returns the appropriate calculator (M3GNet or MACE)."""
+   calculator = None
+   if engine == "m3gnet":
+      print("Initializing M3GNet calculator...")
+      potential = Potential(M3GNet.load())
+      calculator = M3GNetCalculator(potential=potential, stress_weight=0.01)
+   elif engine == "mace":
+      if not HAVE_MACE:
+         sys.exit("MACE not found – `pip install mace-torch` or use --engine m3gnet")
+
+      device = get_mace_device()
+      print(f"Initializing MACE calculator on device: {device}...")
+      calculator = mace_mp(model="medium-omat-0",
+                           dispersion=False,
+                           default_dtype="float64",
+                           device=device,
+                           stress=True)
+   else:
+      print(f"Error: Engine '{engine}' not supported yet.")
+      return None
+
+   print(f"{engine.upper()} calculator initialized.")
+   return calculator
+
+def print_initial_structure_info(atoms):
+   """Prints basic information about the initial structure."""  
+   print("\n--- Initial Structure Information ---")  
+   print(f"Formula: {atoms.get_chemical_formula()}")  
+   print(f"Number of atoms: {len(atoms)}")  
+   print(f"Cell volume: {atoms.get_volume():.4f} Å³")  
+   print("Cell parameters (a, b, c, alpha, beta, gamma):")  
+   cell = atoms.get_cell()  
+   print(f"  a={cell.lengths()[0]:.4f}, b={cell.lengths()[1]:.4f}, c={cell.lengths()[2]:.4f}")  
+   print(f"  alpha={cell.angles()[0]:.2f}, beta={cell.angles()[1]:.2f}, gamma={cell.angles()[2]:.2f}")  
+   print("-------------------------------------")
+   initial_fractional_coords = atoms.get_scaled_positions()
+   print("   Initial Fractional Coordinates:")
+   for i, pos in enumerate(initial_fractional_coords):
+      print(f"      Atom {i+1}: {pos[0]:.6f}, {pos[1]:.6f}, {pos[2]:.6f}")
+
+def print_final_structure_info(initial_atoms, final_atoms, initial_stress, final_stress):
+   """Prints comparison information between initial and final ASE Atoms objects after relaxation."""
+   initial_cell = initial_atoms.get_cell()
+   initial_positions = initial_atoms.get_positions()
+   initial_cell_params = initial_cell.cellpar()
+
+   final_cell = final_atoms.get_cell()
+   final_positions = final_atoms.get_positions()
+   final_fractional_coords = final_atoms.get_scaled_positions()
+   final_cell_params = final_cell.cellpar()
+
+   print("\n### Relaxation Results ###")
+   print("   Cell Parameters Change:")
+   print(f"      Initial (a, b, c, alpha, beta, gamma): {initial_cell_params[0]:.4f}, {initial_cell_params[1]:.4f}, {initial_cell_params[2]:.4f}, {initial_cell_params[3]:.2f}, {initial_cell_params[4]:.2f}, {initial_cell_params[5]:.2f}")
+   print(f"      Final   (a, b, c, alpha, beta, gamma): {final_cell_params[0]:.4f}, {final_cell_params[1]:.4f}, {final_cell_params[2]:.4f}, {final_cell_params[3]:.2f}, {final_cell_params[4]:.2f}, {final_cell_params[5]:.2f}")
+   print(f"      Difference (a, b, c): {final_cell_params[0]-initial_cell_params[0]:.4f}, {final_cell_params[1]-initial_cell_params[1]:.4f}, {final_cell_params[2]-initial_cell_params[2]:.4f}")
+   print(f"      Difference (alpha, beta, gamma): {final_cell_params[3]-initial_cell_params[3]:.2f}, {final_cell_params[4]-initial_cell_params[4]:.2f}, {final_cell_params[5]-initial_cell_params[5]:.2f}")
+
+   print("\n   Fractional Coordinates After Relaxation:")
+   for i, pos in enumerate(final_fractional_coords):
+      print(f"      Atom {i+1}: {pos[0]:.6f}, {pos[1]:.6f}, {pos[2]:.6f}")
+
+   # Calculate maximum atomic displacement
+   displacements = final_positions - initial_positions
+   max_displacement = np.max(np.linalg.norm(displacements, axis=1))
+   print(f"\n   Maximum atomic displacement during relaxation: {max_displacement:.4f} Å")
+
+   # Print initial and final stress for sanity check
+   if initial_stress is not None:
+      print(f"\n   Initial stress (GPa):\n{initial_stress/1e9}")
+   if final_stress is not None:
+      print(f"   Final stress (GPa):\n{final_stress/1e9}")
+
+def save_relaxed_structure(relaxed_atoms, original_cif_path, engine, fmax, output_dir):
+   """Saves the relaxed structure as a CIF file."""
+   from pymatgen.io.ase import AseAtomsAdaptor # Import here to avoid circular dependency if structure_utils imports relaxation_utils
+
+   cif_filename_base = os.path.splitext(os.path.basename(original_cif_path))[0]
+   relaxed_cif_filename = f"{cif_filename_base}_relaxed_{engine}_f{fmax}.cif"
+   relaxed_cif_path = os.path.join(output_dir, relaxed_cif_filename)
+
+   # Convert ASE Atoms object back to Pymatgen Structure for CIF writing
+   relaxed_struct = AseAtomsAdaptor().get_structure(relaxed_atoms)
+   relaxed_struct.to(filename=relaxed_cif_path)
+   print(f"Relaxed structure saved to: {relaxed_cif_path}")
+
+
+def generate_displaced_supercells(primitive_atoms, softest_mode_info, supercell_variants, displacement_scales, output_base_dir, iteration_idx, original_prefix):
+   """
+   Generates supercells displaced along the softest phonon mode with cell parameter variations.
+
+   Args:
+      primitive_atoms (ase.atoms.Atoms): The primitive cell structure.
+      softest_mode_info (dict): Dictionary containing softest mode information,
+                                 including 'raw_displacements'.
+      supercell_variants (list): List of tuples defining supercell sizes, e.g., [(2,1,1), (2,2,2)].
+      displacement_scales (list): List of scaling factors for the raw displacements.
+      output_base_dir (str): The main output directory.
+      iteration_idx (int): The current iteration number.
+      original_prefix (str): The base filename prefix of the original structure.
+
+   Returns:
+      list: A list of paths to the generated displaced CIF files.
+   """
+   print(f"\n--- Generating Displaced Supercells (Iteration {iteration_idx}) ---")
+
+   soft_mode_label = softest_mode_info.get('label', 'unknown')
+   soft_mode_dir = os.path.join(output_base_dir, f"soft_mode_{iteration_idx}_{soft_mode_label}")
+   os.makedirs(soft_mode_dir, exist_ok=True)
+   print(f"Created directory for soft mode {iteration_idx}: {soft_mode_dir}")
+
+   raw_displacements = np.array(softest_mode_info['raw_displacements'])
+   num_atoms_primitive = len(primitive_atoms)
+
+   # Calculate the magnitude of the raw displacement vector for normalization
+   max_raw_disp_magnitude = np.max(np.linalg.norm(raw_displacements, axis=1))
+
+   if max_raw_disp_magnitude < 1e-6:
+      print("Warning: Softest mode displacements are zero or very small. Cannot generate displaced structures.")
+      return []
+
+   # Normalize the raw displacements
+   normalized_displacements = raw_displacements / max_raw_disp_magnitude
+
+   # Define cell parameter scaling factors
+   cell_scale_factors = [-0.05, 0.0, 0.05, 0.10]  # -5%, 0%, +5%, +10%
+   cell_scale_labels = ["m5", "00", "p5", "p10"]  # Labels for filenames
+
+   generated_files = []
+
+   # --- FORCEFUL CONVERSION HERE ---
+   # Regardless of its current type, create a new pure ase.atoms.Atoms object.
+   print(f"Attempting forceful conversion of primitive_atoms from {type(primitive_atoms)} to ase.atoms.Atoms...")
+   primitive_atoms = Atoms(
+       symbols=primitive_atoms.get_chemical_symbols(),
+       positions=primitive_atoms.get_positions(),
+       cell=primitive_atoms.get_cell(),
+       pbc=primitive_atoms.get_pbc()
+   )
+   print(f"Forceful conversion complete. New primitive_atoms type: {type(primitive_atoms)}")
+   # --- END FORCEFUL CONVERSION ---
+
+
+   for supercell_variant in supercell_variants:
+      sc_n1, sc_n2, sc_n3 = supercell_variant
+      supercell_dir = os.path.join(soft_mode_dir, f"supercell_{sc_n1}x{sc_n2}x{sc_n3}")
+      os.makedirs(supercell_dir, exist_ok=True)
+      print(f"  Created directory for supercell variant: {supercell_dir}")
+
+      # --- Debug prints (keep these for now to confirm the type) ---
+      print("\n--- Debugging make_supercell inputs (after forceful conversion) ---")
+      print(f"  primitive_atoms type: {type(primitive_atoms)}")
+      print(f"  primitive_atoms.cell type: {type(primitive_atoms.cell)}")
+      print(f"  primitive_atoms.cell value:\n{primitive_atoms.cell}")
+      print(f"  primitive_atoms.cell.array shape: {primitive_atoms.cell.array.shape}")
+      print(f"  primitive_atoms.positions type: {type(primitive_atoms.positions)}")
+      print(f"  primitive_atoms.positions shape: {primitive_atoms.positions.shape}")
+      print(f"  supercell_variant type: {type(supercell_variant)}")
+      print(f"  supercell_variant value: {supercell_variant}")
+      print("---------------------------------------")
+      # --- End debug prints ---
+      
+      # Create the supercell
+      supercell_variant_matrix = np.diag(np.array(supercell_variant))
+      supercell_atoms = make_supercell(primitive_atoms, supercell_variant_matrix)
+      num_atoms_supercell = len(supercell_atoms)
+
+      # Map primitive cell indices to supercell indices and displacements
+      primitive_positions = primitive_atoms.get_positions()
+      primitive_cell = primitive_atoms.get_cell()
+      primitive_symbols = primitive_atoms.get_chemical_symbols()
+
+      supercell_positions = supercell_atoms.get_positions()
+      supercell_symbols = supercell_atoms.get_chemical_symbols()
+
+      primitive_to_supercell_indices = [[] for _ in range(num_atoms_primitive)]
+
+      # Iterate through each atom in the supercell to map it back to its primitive origin
+      for i_sc in range(num_atoms_supercell):
+          pos_sc = supercell_positions[i_sc]
+          symbol_sc = supercell_symbols[i_sc]
+
+          # Convert supercell position to fractional coordinates relative to the primitive cell
+          f_prim = primitive_cell.scaled_positions(pos_sc)[0]
+
+          # Wrap fractional coordinates into the [0, 1) range
+          f_prim_wrapped = f_prim % 1.0
+          f_prim_wrapped = np.where(np.isclose(f_prim_wrapped, 1.0), 0.0, f_prim_wrapped)
+
+          # Find which primitive atom this corresponds to
+          found_match = False
+          for i_prim in range(num_atoms_primitive):
+              pos_prim_orig = primitive_positions[i_prim]
+              symbol_prim_orig = primitive_symbols[i_prim]
+
+              if symbol_sc == symbol_prim_orig:
+                  f_prim_orig = primitive_cell.scaled_positions(pos_prim_orig)[0]
+                  if np.allclose(f_prim_wrapped, f_prim_orig, atol=1e-4):
+                      primitive_to_supercell_indices[i_prim].append(i_sc)
+                      found_match = True
+                      break
+
+          if not found_match:
+               print(f"Warning: Could not map supercell atom {i_sc} ({symbol_sc}) at {pos_sc} to a primitive atom.")
+
+
+      # Now apply scaled displacements with cell parameter variations
+      for scale in displacement_scales:
+          displaced_atoms = supercell_atoms.copy()
+          # Create a zero array for displacements in the supercell
+          displacements_for_this_scale = np.zeros_like(supercell_atoms.get_positions())
+
+          for i_prim in range(num_atoms_primitive):
+               # The displacement vector for a primitive atom
+               disp_prim_vector = normalized_displacements[i_prim] * scale * max_raw_disp_magnitude # Scale by the desired amplitude
+
+               # Apply this displacement to all corresponding atoms in the supercell
+               for i_sc in primitive_to_supercell_indices[i_prim]:
+                    displacements_for_this_scale[i_sc] = disp_prim_vector
+
+          displaced_atoms.set_positions(displaced_atoms.get_positions() + displacements_for_this_scale)
+
+          # Generate variants with different cell parameter scalings
+          for cell_scale, cell_label in zip(cell_scale_factors, cell_scale_labels):
+              # Create a copy of the displaced atoms for this cell scaling
+              cell_scaled_atoms = displaced_atoms.copy()
+              
+              # Get the original cell and scale it
+              original_cell = displaced_atoms.get_cell()
+              scaled_cell = original_cell * (1.0 + cell_scale)
+              
+              # Set the new scaled cell
+              cell_scaled_atoms.set_cell(scaled_cell, scale_atoms=True)
+              
+              # Save the displaced and cell-scaled structure
+              filename = f"{original_prefix}_d{scale:.3f}_c{cell_label}.cif"
+              filepath = os.path.join(supercell_dir, filename)
+              write(filepath, cell_scaled_atoms)
+              generated_files.append(filepath)
+
+              # --- NEW: Save as .xyz as well ---  
+              filename_xyz = f"{original_prefix}_d{scale:.3f}_c{cell_label}.xyz"  
+              filepath_xyz = os.path.join(supercell_dir, filename_xyz)  
+              write(filepath_xyz, cell_scaled_atoms)  
+              # No need to add to generated_files as we only track CIFs for relaxation  
+              print(f"  Generated {filename} (displacement: {scale:.3f}, cell scale: {cell_scale:+.1%}) and {filename_xyz}")
+
+   print("Finished generating displaced supercells with cell parameter variations.")
+   return generated_files
+--- END FILE: {file_path} ---
+
+--- FILE: vibroml/utils/utils.py ---
+import math
+import os
+import shutil
+import logging
+import sys
+import torch
+
+# Suppress TensorFlow warnings and info messages
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
+tf.get_logger().setLevel(logging.ERROR)
+
+# Try importing MACE
+try:
+   from mace.calculators import mace_mp
+   HAVE_MACE = True
+except ImportError:
+   HAVE_MACE = False
+
+def custom_round(number, interval):
+   """Rounds a number down to the nearest multiple of an interval."""
+   return math.floor(number / interval) * interval
+
+def clean_phonon_cache(phonon_cache_dir='phonon'):
+   """Checks for and deletes the phonon cache directory if it exists."""
+   if os.path.exists(phonon_cache_dir):
+      cache_files = [f for f in os.listdir(phonon_cache_dir) if f.startswith('cache') and f.endswith('.json')]
+      if cache_files:
+         try:
+               shutil.rmtree(phonon_cache_dir)
+               print(f"Deleted existing phonon cache directory: {phonon_cache_dir}")
+         except OSError as e:
+               print(f"Error deleting phonon cache directory {phonon_cache_dir}: {e}")
+
+def get_mace_device():
+   """Determines the appropriate device for MACE calculation (cuda or cpu)."""
+   if HAVE_MACE:
+      if torch.cuda.is_available():
+         device = "cuda"
+         print("CUDA is available. Using GPU for MACE calculation.")
+      else:
+         device = "cpu"
+         print("CUDA is not available. Falling back to CPU for MACE calculation.")
+      return device
+   else:
+      return None # MACE not available
+--- END FILE: {file_path} ---
+

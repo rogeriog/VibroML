@@ -167,7 +167,7 @@ def relax_structures_in_folder(folder_path: str, calculator: Calculator, engine:
          print(f"  Relaxing {cif_file}...")    
          summary_f.write(f"### Structure: {cif_file} ###\n")  
          summary_f.write(f"Original File: {original_filepath}\n")  
-  
+         summary_f.write(f"Total Number of Atoms: {len(atoms)}\n")
          try:    
             # Load the structure    
             atoms = read(original_filepath)    
