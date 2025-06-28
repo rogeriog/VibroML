@@ -244,41 +244,59 @@ def relax_structures_in_folder(folder_path: str, calculator: Calculator, engine:
                  print(f"  Relaxed structure saved to {relaxed_xyz_filepath}")  
                  summary_f.write(f"Relaxed XYZ File: {relaxed_xyz_filepath}\n")  
  
+                 cif_results = {    
+                       'original_file': original_filepath,    
+                       'relaxed_file': relaxed_filepath,    
+                       'energy': final_energy,    
+                       'energy_per_atom': final_energy_per_atom,  
+                       'relaxed_atoms': atoms.copy() 
+                 }  
+                 relaxation_results.append(cif_results)    
                    
-                 # Perform symmetry analysis for the relaxed structure using the dedicated function  
-                 # This will also write the symmetry analysis to a file in the folder_path  
-                 best_dataset_for_relaxed, crystal_system_for_relaxed = analyze_symmetry(atoms, folder_path, prefix="relaxed_in_folder", auto_tune_symprec=True)  
-                   
-                 # Now, use these returned values in cif_results  
-                 cif_results = {      
-                       'original_file': original_filepath,      
-                       'relaxed_file': relaxed_filepath,      
-                       'energy': final_energy,      
-                       'energy_per_atom': final_energy_per_atom,    
-                       'relaxed_atoms': atoms.copy(),  
-                       'num_atoms': len(atoms),    
-                       'international_symbol': best_dataset_for_relaxed['international'] if best_dataset_for_relaxed else 'N/A',    
-                       'crystal_system': crystal_system_for_relaxed if best_dataset_for_relaxed else 'N/A'  
-                 }    
-                 relaxation_results.append(cif_results)      
-                     
-                 # Add symmetry info to the summary_f for this specific structure  
+                 # Perform symmetry analysis for the relaxed structure  
                  summary_f.write("\n  --- Relaxed Structure Symmetry Analysis ---\n")  
-                 if best_dataset_for_relaxed:  
-                     summary_f.write(f"  Symmetry Precision (Auto-tuned): {best_dataset_for_relaxed.get('symprec_found', 'N/A'):.4e}\n") # Assuming symprec_found is added to dataset  
-                     summary_f.write(f"  Space Group Number: {best_dataset_for_relaxed['number']}\n")  
-                     summary_f.write(f"  International Symbol: {best_dataset_for_relaxed['international']}\n")  
-                     summary_f.write(f"  Hall Symbol: {best_dataset_for_relaxed['hall']}\n")  
-                     summary_f.write(f"  Point Group Symbol: {best_dataset_for_relaxed['pointgroup']}\n")  
-                     summary_f.write(f"  Crystal System: {crystal_system_for_relaxed}\n")  
-                     if 'lattice_type' in best_dataset_for_relaxed:  
-                         summary_f.write(f"  Lattice Type: {best_dataset_for_relaxed['lattice_type']}\n")  
+                 cell = (atoms.get_cell(), atoms.get_scaled_positions(), atoms.get_atomic_numbers())  
+                 
+                 symprec = 1e-3 
+                 symprec_values = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]  
+                 best_spacegroup_num = 0  
+                 best_symprec_found = symprec  
+                 best_dataset = None  
+   
+                 for test_symprec in symprec_values:  
+                     dataset = spglib.get_symmetry_dataset(cell, symprec=test_symprec)  
+                     if dataset and dataset['number'] > best_spacegroup_num:  
+                         best_spacegroup_num = dataset['number']  
+                         best_symprec_found = test_symprec  
+                         best_dataset = dataset  
+               
+                 if best_dataset:  
+                     summary_f.write(f"  Symmetry Precision (Auto-tuned): {best_symprec_found:.4e}\n")  
+                     summary_f.write(f"  Space Group Number: {best_dataset['number']}\n")  
+                     summary_f.write(f"  International Symbol: {best_dataset['international']}\n")  
+                     summary_f.write(f"  Hall Symbol: {best_dataset['hall']}\n")  
+                     summary_f.write(f"  Point Group Symbol: {best_dataset['pointgroup']}\n")  
+                     
+                     crystal_system = "N/A"  
+                     try:  
+                         pmg_structure = AseAtomsAdaptor().get_structure(atoms)  
+                         sga = SpacegroupAnalyzer(pmg_structure, symprec=best_symprec_found)  
+                         crystal_system = sga.get_crystal_system()  
+                     except Exception as e:  
+                         summary_f.write(f"  Warning: Could not determine crystal system using Pymatgen: {e}\n")  
+                     summary_f.write(f"  Crystal System: {crystal_system}\n")  
+                     
+                     if 'lattice_type' in best_dataset:  
+                         summary_f.write(f"  Lattice Type: {best_dataset['lattice_type']}\n")  
                      else:  
                          summary_f.write("  Lattice Type: Not directly available from spglib dataset\n")  
-                     summary_f.write(f"  Number of atoms in primitive cell: {len(best_dataset_for_relaxed['std_types'])}\n")  
+                     
+                     summary_f.write(f"  Number of atoms in primitive cell: {len(best_dataset['std_types'])}\n")  
+                     summary_f.write(f"  Transformation matrix to primitive cell:\n{np.array2string(best_dataset['transformation_matrix'], separator=', ')}\n")  
+                     summary_f.write(f"  Origin shift: {np.array2string(best_dataset['origin_shift'], separator=', ')}\n")  
                  else:  
                      summary_f.write("  No symmetry found for the relaxed structure at any tested precision.\n")  
-                 summary_f.write("  -------------------------------------------\n\n")
+                 summary_f.write("  -------------------------------------------\n\n")  
              else: # Not converged
                  summary_f.write(f"Relaxation Status: FAIL (did not converge)\n")
                  summary_f.write(f"Final Energy: FAIL\n")
@@ -331,7 +349,6 @@ def find_lowest_energy_structures(all_relaxation_results: list, num_to_select: i
    return lowest_energy_structures
 
 
-# In analyze_symmetry function, at the very beginning of the function:
 def analyze_symmetry(atoms, output_dir, prefix="", symprec=1e-3, auto_tune_symprec=False):
     """
     Analyzes the symmetry of an ASE Atoms object using spglib and saves the results to a file.
@@ -353,7 +370,7 @@ def analyze_symmetry(atoms, output_dir, prefix="", symprec=1e-3, auto_tune_sympr
     filename = f"{prefix}_symmetry_analysis.txt" if prefix else "symmetry_analysis.txt"
     symmetry_file_path = os.path.join(output_dir, filename)
 
-    best_dataset = None # Initialize best_dataset here
+    best_dataset = None
     best_symprec = symprec
     
     symprec_values_to_check = [1e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2]
@@ -372,14 +389,13 @@ def analyze_symmetry(atoms, output_dir, prefix="", symprec=1e-3, auto_tune_sympr
                     found_symmetries.append((dataset['number'], current_symprec, dataset))  
 
             if found_symmetries:  
-                # Sort by space group number (descending) then symprec (ascending)
-                found_symmetries.sort(key=lambda x: (-x[0], x[1])) # Changed sort key
+                found_symmetries.sort(key=lambda x: (x[0], x[1]))  
                 best_dataset = found_symmetries[0][2]  
                 best_symprec = found_symmetries[0][1]  
                 print(f"   Highest symmetry found (Space Group {best_dataset['number']}) at symprec = {best_symprec:.4e}")  
             else:  
                 print("   No symmetry found across the tested symprec range.")  
-                # best_dataset remains None
+                best_dataset = None  
                 best_symprec = None  
         else:  
             best_dataset = spglib.get_symmetry_dataset((cell, positions, numbers), symprec=symprec)  
@@ -411,7 +427,7 @@ def analyze_symmetry(atoms, output_dir, prefix="", symprec=1e-3, auto_tune_sympr
     print("---------------------------------------")
 
     crystal_system = "N/A"
-    if best_dataset and best_symprec is not None: # Added check for best_symprec
+    if best_dataset:
         try:
             pmg_structure = AseAtomsAdaptor().get_structure(atoms)
             sga = SpacegroupAnalyzer(pmg_structure, symprec=best_symprec)
@@ -453,7 +469,7 @@ def analyze_symmetry(atoms, output_dir, prefix="", symprec=1e-3, auto_tune_sympr
             print(f"   Could not determine {prefix} symmetry for any tested symprec value.")
 
     print(f"» {prefix.capitalize()} symmetry analysis complete.")
-    return best_dataset, crystal_system
+
 
 def create_displaced_supercell_summary(mode_folder_path: str):  
     """  

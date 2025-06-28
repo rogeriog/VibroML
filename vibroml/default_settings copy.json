@@ -12,12 +12,8 @@
     "default_units": "THz",
     "default_traj_kT": 1.0,
     "negative_phonon_threshold_thz": -0.1,
-    "soft_mode_max_iterations": 2,
-    "soft_mode_displacement_scales": [10.000, 17.783, 31.623, 56.234, 100.000],
+    "soft_mode_max_iterations": 1,
+    "soft_mode_displacement_scales": [ 17.783, 31.623, 56.234], // [10.000, 17.783, 31.623, 56.234, 100.000],
     "soft_mode_num_top_structures_to_analyze": 5,
-    "cell_scale_factors": [-0.10, -0.05, 0.0, 0.05, 0.10],
-    "num_modes_to_return": 2,
-    "num_new_points_per_iteration": 10,
-    "ga_population_size": 20,
-    "ga_mutation_rate": 0.2
+    "cell_scale_factors": [-0.05, 0.10],     // [-0.05, 0.05, 0.10]
 }

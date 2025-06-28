@@ -29,8 +29,8 @@ VibroML can be installed via `pip` or from source.
 pip install vibroml
 
 # From source (for development or latest features)
-git clone https://github.com/your-org/vibroml.git
-cd vibroml
+git clone https://github.com/rogeriog/vibroml.git
+cd VibroML
 pip install -e .
 ```
 

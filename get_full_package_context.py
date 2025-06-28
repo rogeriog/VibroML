@@ -17,12 +17,13 @@ def concatenate_project_files(root_dir, output_file=None):
     # Order them logically for the LLM (e.g., README first, then setup, then source).
     files_to_include = [
         'README.md',
-        'setup.py',
-        'requirements.txt',
+        # 'setup.py',
+        # 'requirements.txt',
         'vibroml/main.py',
         'vibroml/auto_optimize.py',
+        'vibroml/default_settings.json',
         'vibroml/utils/config.py',
-        'vibroml/utils/__init__.py',
+        # 'vibroml/utils/__init__.py',
         'vibroml/utils/phonon_utils.py',
         'vibroml/utils/plotting_utils.py',
         'vibroml/utils/relaxation_utils.py',
