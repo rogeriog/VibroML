@@ -49,7 +49,7 @@ pip install -e .
 To run a phonon calculation, you need a CIF file and specify the calculation engine.
 
 ```bash
-vibroml --cif path/to/your_structure.cif --engine mace
+vibroml --cif your_structure.cif --engine mace
 ```
 
 #### 1. Phonon-Only Mode  
@@ -133,15 +133,8 @@ vibroml/
 ```
 
 ### Contributing  
-We welcome contributions to VibroML! Please follow these steps:  
-1.  **Fork the repository:** Create your own fork on GitHub.  
-2.  **Create a feature branch:** `git checkout -b feature/your-feature-name`  
-3.  **Implement your changes:** Write clear, concise code.  
-4.  **Write tests:** Ensure your new features are covered by tests and existing tests pass.  
-5.  **Update documentation:** If your changes affect functionality, update the README or other relevant documentation.  
-6.  **Submit a pull request:** Provide a clear and detailed description of your changes.  
+We welcome contributions to VibroML! Please fork the repository, make your changes, and submit a pull request with a clear description of your modifications.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) (if you create one) for more detailed guidelines.
 
 ### License  
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for full text.
