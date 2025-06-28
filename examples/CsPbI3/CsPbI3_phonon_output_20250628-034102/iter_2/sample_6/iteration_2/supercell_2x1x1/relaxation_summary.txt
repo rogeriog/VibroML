@@ -1,0 +1,17 @@
+--- Relaxation Summary for Folder: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/CsPbI3/CsPbI3_phonon_output_20250628-034102/iter_2/sample_6/iteration_2/supercell_2x1x1 ---
+Analysis Date: 2025-06-28 04:27:14
+
+### Structure: CsPbI3_d1_20.523_r21_0.821_c_p090_m192_p103_m6901_p18363_p29561.cif ###
+Original File: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/CsPbI3/CsPbI3_phonon_output_20250628-034102/iter_2/sample_6/iteration_2/supercell_2x1x1/CsPbI3_d1_20.523_r21_0.821_c_p090_m192_p103_m6901_p18363_p29561.cif
+Total Number of Atoms: 40
+Relaxation Status: FAIL (did not converge)
+Final Energy: FAIL
+Final Energy per Atom: FAIL
+Relaxed File: N/A
+Relaxed XYZ File: N/A
+Unconverged File: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/CsPbI3/CsPbI3_phonon_output_20250628-034102/iter_2/sample_6/iteration_2/supercell_2x1x1/CsPbI3_d1_20.523_r21_0.821_c_p090_m192_p103_m6901_p18363_p29561_unconverged.cif
+
+  --- Relaxed Structure Symmetry Analysis ---
+  Skipped due to relaxation failure.
+  -------------------------------------------
+

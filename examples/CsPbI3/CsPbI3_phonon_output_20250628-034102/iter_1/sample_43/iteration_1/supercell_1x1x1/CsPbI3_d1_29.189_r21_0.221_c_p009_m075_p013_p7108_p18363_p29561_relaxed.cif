@@ -1,0 +1,30 @@
+data_image0
+_chemical_formula_structural       CsPbI3
+_chemical_formula_sum              "Cs1 Pb1 I3"
+_cell_length_a       6.39990702275474
+_cell_length_b       6.412331426523101
+_cell_length_c       6.393309484805998
+_cell_angle_alpha    89.98396508325465
+_cell_angle_beta     90.01166875593128
+_cell_angle_gamma    90.8552112583568
+
+_space_group_name_H-M_alt    "P 1"
+_space_group_IT_number       1
+
+loop_
+  _space_group_symop_operation_xyz
+  'x, y, z'
+
+loop_
+  _atom_site_type_symbol
+  _atom_site_label
+  _atom_site_symmetry_multiplicity
+  _atom_site_fract_x
+  _atom_site_fract_y
+  _atom_site_fract_z
+  _atom_site_occupancy
+  Cs  Cs1       1.0  0.5254311349292824  0.4579525827492401  0.49921993592570146  1.0000
+  Pb  Pb1       1.0  0.9962283432093862  0.00892821689028208  0.9999585987137115  1.0000
+  I   I1        1.0  0.9948669251759001  0.03059830046652838  0.5000938925974757  1.0000
+  I   I2        1.0  0.49249186203198947  0.03130309009682947  5.1223377846166025e-05  1.0000
+  I   I3        1.0  0.9752890542916792  0.5167309963925869  0.00067637804011018  1.0000

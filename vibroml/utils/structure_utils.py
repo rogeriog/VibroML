@@ -211,13 +211,34 @@ def generate_displaced_supercells(primitive_atoms,
    new_beta = original_cell_params[4] + scale_beta
    new_gamma = original_cell_params[5] + scale_gamma
 
-   # Ensure angles are within reasonable bounds (e.g., 0 to 180 degrees)
-   new_alpha = np.clip(new_alpha, 1e-6, 179.999)
-   new_beta = np.clip(new_beta, 1e-6, 179.999)
-   new_gamma = np.clip(new_gamma, 1e-6, 179.999)
-
-   new_cell_params = (new_a, new_b, new_c, new_alpha, new_beta, new_gamma)
-   new_cell_matrix = Cell.fromcellpar(new_cell_params)
+   # --- START MODIFICATION FOR ROBUST ANGLE HANDLING ---  
+   # Ensure angles are strictly positive and less than 180, with a margin  
+   # This is crucial to avoid numerical issues that lead to cz_sqr < 0  
+   angle_min_bound = 5.0 # Keep angles at least 5 degrees away from 0  
+   angle_max_bound = 175.0 # Keep angles at least 5 degrees away from 180  
+  
+   new_alpha = np.clip(new_alpha, angle_min_bound, angle_max_bound)  
+   new_beta = np.clip(new_beta, angle_min_bound, angle_max_bound)  
+   new_gamma = np.clip(new_gamma, angle_min_bound, angle_max_bound)  
+  
+   new_cell_params = (new_a, new_b, new_c, new_alpha, new_beta, new_gamma)  
+  
+   try:  
+       from ase.geometry.cell import cellpar_to_cell
+       # Attempt to create the cell matrix. This is where the AssertionError happens.  
+       # We use cellpar_to_cell directly to catch the specific AssertionError.  
+       new_cell_matrix = cellpar_to_cell(new_cell_params)  
+   except AssertionError:  
+       print(f"Warning: Generated cell parameters are unphysical for sample {original_prefix} "  
+             f"with cell_transformation_vector {cell_transformation_vector}. "  
+             f"Resulting parameters: {new_cell_params}. Skipping this sample.")  
+       # Return an empty list, indicating no structures were generated for this sample.  
+       # The GA should then assign a very high (bad) fitness to this sample.  
+       return []  
+   except Exception as e:  
+       print(f"An unexpected error occurred while creating cell matrix for sample {original_prefix}: {e}. Skipping this sample.")  
+       return []  
+   # --- END MODIFICATION FOR ROBUST ANGLE HANDLING ---
 
    transformed_primitive_atoms.set_cell(new_cell_matrix, scale_atoms=True) # scale_atoms=True moves atoms proportionally
 

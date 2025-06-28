@@ -159,6 +159,262 @@ If you use VibroML in your work, please cite:
 
 --- END FILE: {file_path} ---
 
+--- FILE: environment.yml ---
+name: /auto/globalscratch/users/r/g/rgouvea/vibroml_env
+channels:
+  - abinit
+  - conda-forge
+  - defaults
+dependencies:
+  - _libgcc_mutex=0.1
+  - _openmp_mutex=4.5
+  - bzip2=1.0.8
+  - ca-certificates=2025.6.15
+  - ld_impl_linux-64=2.43
+  - libffi=3.4.6
+  - libgcc=15.1.0
+  - libgcc-ng=15.1.0
+  - libgomp=15.1.0
+  - liblzma=5.8.1
+  - liblzma-devel=5.8.1
+  - libnsl=2.0.1
+  - libsqlite=3.50.1
+  - libuuid=2.38.1
+  - libxcrypt=4.4.36
+  - libzlib=1.3.1
+  - ncurses=6.5
+  - openssl=3.5.0
+  - pip=25.1.1
+  - python=3.9.20
+  - readline=8.2
+  - setuptools=80.9.0
+  - tk=8.6.13
+  - wheel=0.45.1
+  - xz=5.8.1
+  - xz-gpl-tools=5.8.1
+  - xz-tools=5.8.1
+  - pip:
+    - absl-py==2.3.0
+    - ase==3.25.0
+    - astunparse==1.6.3
+    - certifi==2025.6.15
+    - charset-normalizer==3.4.2
+    - configargparse==1.7.1
+    - contourpy==1.3.0
+    - cycler==0.12.1
+    - e3nn==0.4.4
+    - filelock==3.18.0
+    - flatbuffers==25.2.10
+    - fonttools==4.58.4
+    - fsspec==2025.5.1
+    - gast==0.6.0
+    - gitdb==4.0.12
+    - gitpython==3.1.44
+    - google-pasta==0.2.0
+    - grpcio==1.73.0
+    - h5py==3.14.0
+    - idna==3.10
+    - importlib-metadata==8.7.0
+    - importlib-resources==6.5.2
+    - jinja2==3.1.6
+    - joblib==1.5.1
+    - keras==3.10.0
+    - kiwisolver==1.4.7
+    - latexcodec==3.0.1
+    - libclang==18.1.1
+    - lightning-utilities==0.14.3
+    - lmdb==1.6.2
+    - m3gnet==0.2.4
+    - mace-torch==0.3.13
+    - markdown==3.8.2
+    - markdown-it-py==3.0.0
+    - markupsafe==3.0.2
+    - matplotlib==3.9.4
+    - matscipy==1.1.1
+    - mdurl==0.1.2
+    - ml-dtypes==0.5.1
+    - monty==2025.3.3
+    - mpmath==1.3.0
+    - namex==0.1.0
+    - narwhals==1.44.0
+    - networkx==3.2.1
+    - numpy==1.26.4
+    - nvidia-cublas-cu12==12.6.4.1
+    - nvidia-cuda-cupti-cu12==12.6.80
+    - nvidia-cuda-nvrtc-cu12==12.6.77
+    - nvidia-cuda-runtime-cu12==12.6.77
+    - nvidia-cudnn-cu12==9.5.1.17
+    - nvidia-cufft-cu12==11.3.0.4
+    - nvidia-cufile-cu12==1.11.1.6
+    - nvidia-curand-cu12==10.3.7.77
+    - nvidia-cusolver-cu12==11.7.1.2
+    - nvidia-cusparse-cu12==12.5.4.2
+    - nvidia-cusparselt-cu12==0.6.3
+    - nvidia-nccl-cu12==2.26.2
+    - nvidia-nvjitlink-cu12==12.6.85
+    - nvidia-nvtx-cu12==12.6.77
+    - opt-einsum==3.4.0
+    - opt-einsum-fx==0.1.4
+    - optree==0.16.0
+    - orjson==3.10.18
+    - packaging==25.0
+    - palettable==3.3.3
+    - pandas==2.3.0
+    - pillow==11.2.1
+    - plotly==6.1.2
+    - prettytable==3.16.0
+    - protobuf==5.29.5
+    - pybtex==0.25.0
+    - pygments==2.19.2
+    - pymatgen==2024.8.9
+    - pyparsing==3.2.3
+    - python-dateutil==2.9.0.post0
+    - python-hostlist==2.2.1
+    - pytz==2025.2
+    - pyyaml==6.0.2
+    - requests==2.32.4
+    - rich==14.0.0
+    - ruamel-yaml==0.18.14
+    - ruamel-yaml-clib==0.2.12
+    - scipy==1.13.1
+    - six==1.17.0
+    - smmap==5.0.2
+    - spglib==2.6.0
+    - sympy==1.14.0
+    - tabulate==0.9.0
+    - tensorboard==2.19.0
+    - tensorboard-data-server==0.7.2
+    - tensorflow==2.19.0
+    - tensorflow-io-gcs-filesystem==0.37.1
+    - termcolor==3.1.0
+    - torch==2.7.1
+    - torch-ema==0.3
+    - torchmetrics==1.7.3
+    - tqdm==4.67.1
+    - triton==3.3.1
+    - typing-extensions==4.14.0
+    - tzdata==2025.2
+    - uncertainties==3.2.3
+    - urllib3==2.5.0
+    - wcwidth==0.2.13
+    - werkzeug==3.1.3
+    - wrapt==1.17.2
+    - zipp==3.23.0
+prefix: /auto/globalscratch/users/r/g/rgouvea/vibroml_env
+
+--- END FILE: {file_path} ---
+
+--- FILE: requirements.txt ---
+absl-py==2.3.0
+ase==3.25.0
+astunparse==1.6.3
+certifi==2025.6.15
+charset-normalizer==3.4.2
+configargparse==1.7.1
+contourpy==1.3.0
+cycler==0.12.1
+e3nn==0.4.4
+filelock==3.18.0
+flatbuffers==25.2.10
+fonttools==4.58.4
+fsspec==2025.5.1
+gast==0.6.0
+gitdb==4.0.12
+gitpython==3.1.44
+google-pasta==0.2.0
+grpcio==1.73.0
+h5py==3.14.0
+idna==3.10
+importlib-metadata==8.7.0
+importlib-resources==6.5.2
+jinja2==3.1.6
+joblib==1.5.1
+keras==3.10.0
+kiwisolver==1.4.7
+latexcodec==3.0.1
+libclang==18.1.1
+lightning-utilities==0.14.3
+lmdb==1.6.2
+m3gnet==0.2.4
+mace-torch==0.3.13
+markdown==3.8.2
+markdown-it-py==3.0.0
+markupsafe==3.0.2
+matplotlib==3.9.4
+matscipy==1.1.1
+mdurl==0.1.2
+ml-dtypes==0.5.1
+monty==2025.3.3
+mpmath==1.3.0
+namex==0.1.0
+narwhals==1.44.0
+networkx==3.2.1
+numpy==1.26.4
+nvidia-cublas-cu12==12.6.4.1
+nvidia-cuda-cupti-cu12==12.6.80
+nvidia-cuda-nvrtc-cu12==12.6.77
+nvidia-cuda-runtime-cu12==12.6.77
+nvidia-cudnn-cu12==9.5.1.17
+nvidia-cufft-cu12==11.3.0.4
+nvidia-cufile-cu12==1.11.1.6
+nvidia-curand-cu12==10.3.7.77
+nvidia-cusolver-cu12==11.7.1.2
+nvidia-cusparse-cu12==12.5.4.2
+nvidia-cusparselt-cu12==0.6.3
+nvidia-nccl-cu12==2.26.2
+nvidia-nvjitlink-cu12==12.6.85
+nvidia-nvtx-cu12==12.6.77
+opt-einsum==3.4.0
+opt-einsum-fx==0.1.4
+optree==0.16.0
+orjson==3.10.18
+packaging==25.0
+palettable==3.3.3
+pandas==2.3.0
+pillow==11.2.1
+plotly==6.1.2
+prettytable==3.16.0
+protobuf==5.29.5
+pybtex==0.25.0
+pygments==2.19.2
+pymatgen==2024.8.9
+pyparsing==3.2.3
+python-dateutil==2.9.0.post0
+python-hostlist==2.2.1
+pytz==2025.2
+pyyaml==6.0.2
+requests==2.32.4
+rich==14.0.0
+ruamel-yaml==0.18.14
+ruamel-yaml-clib==0.2.12
+scipy==1.13.1
+six==1.17.0
+smmap==5.0.2
+spglib==2.6.0
+sympy==1.14.0
+tabulate==0.9.0
+tensorboard==2.19.0
+tensorboard-data-server==0.7.2
+tensorflow==2.19.0
+tensorflow-io-gcs-filesystem==0.37.1
+termcolor==3.1.0
+torch==2.7.1
+torch-ema==0.3
+torchmetrics==1.7.3
+tqdm==4.67.1
+triton==3.3.1
+typing-extensions==4.14.0
+tzdata==2025.2
+uncertainties==3.2.3
+urllib3==2.5.0
+wcwidth==0.2.13
+werkzeug==3.1.3
+wrapt==1.17.2
+zipp==3.23.0
+
+
+--- END FILE: {file_path} ---
+
 --- FILE: vibroml/main.py ---
 # vibroml/main.py
 import argparse
@@ -699,26 +955,25 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
     elif args.units == "eV":
         threshold_in_current_units *= 4.135667696e-3
 
-    # Determine supercell variants based on symmetry (same logic as before)
-    cell = current_primitive_atoms.cell
-    lengths = np.linalg.norm(cell, axis=1)
-    angles = np.array([
-        np.arccos(np.dot(cell[1], cell[2]) / (lengths[1] * lengths[2])),
-        np.arccos(np.dot(cell[0], cell[2]) / (lengths[0] * lengths[2])),
-        np.arccos(np.dot(cell[0], cell[1]) / (lengths[0] * lengths[1]))
-    ])
-    is_cubic = (np.allclose(angles, np.pi / 2, atol=1e-3) and np.allclose(lengths, lengths[0], rtol=1e-3))
-    is_tetragonal = (np.allclose(angles, np.pi / 2, atol=1e-3) and any(np.allclose(lengths[i], lengths[j], rtol=1e-3) for i, j in [(0, 1), (1, 2), (0, 2)]))
-    is_hexagonal = (np.allclose(angles[0:2], np.pi / 2, atol=1e-3) and np.isclose(angles[2], np.pi * 2/3, atol=1e-3) and np.allclose(lengths[0:2], lengths[0], rtol=1e-3))
-    if is_cubic:
-        supercell_variants = [(1, 1, 1)] # [(1, 1, 1), (2, 2, 2), (2, 2, 1), (2, 1, 1)]
-    elif is_tetragonal:
-        supercell_variants = [(1, 1, 1), (2, 2, 2), (2, 2, 1), (2, 1, 2), (2, 1, 1)]
-    elif is_hexagonal:
-        supercell_variants = [(1, 1, 1), (2, 1, 2), (1, 2, 1), (1, 1, 2), (2, 2, 2)]
-    else:
-        supercell_variants = [(1, 1, 1), (2, 1, 1), (1, 2, 1), (1, 1, 2), (2, 2, 1), (2, 1, 2), (1, 2, 2), (2, 2, 2)]
-
+    # Determine supercell variants based on cell lengths  
+    cell = current_primitive_atoms.cell  
+    lengths = np.linalg.norm(cell, axis=1)  
+    
+    # Check for equality of lengths  
+    is_all_equal = np.allclose(lengths, lengths[0], rtol=1e-3)  
+    is_two_equal = (  
+        (np.allclose(lengths[0], lengths[1], rtol=1e-3) and not np.allclose(lengths[1], lengths[2], rtol=1e-3)) or  
+        (np.allclose(lengths[0], lengths[2], rtol=1e-3) and not np.allclose(lengths[0], lengths[1], rtol=1e-3)) or  
+        (np.allclose(lengths[1], lengths[2], rtol=1e-3) and not np.allclose(lengths[0], lengths[1], rtol=1e-3))  
+    )  
+    is_all_different = not is_all_equal and not is_two_equal  
+    
+    if is_all_equal:  
+        supercell_variants = [(1, 1, 1), (2, 1, 1), (2, 2, 1), (2, 2, 2)]  
+    elif is_two_equal:  
+        supercell_variants = [(1, 1, 1), (2, 1, 1), (1, 2, 1), (2, 2, 1), (2, 2, 2)]  
+    else: # is_all_different  
+        supercell_variants = [(1, 1, 1), (2, 1, 1), (1, 2, 1), (1, 1, 2), (2, 2, 1), (1, 2, 2), (2, 2, 2)]
     all_iterations_results = [] # Stores {'params': (disp_scale, ratio, cell_vec), 'fitness': energy, 'relaxed_atoms': atoms_obj, 'original_file': path}
 
     # Define GA parameter bounds
@@ -1061,8 +1316,8 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
     "soft_mode_num_top_structures_to_analyze": 5,
     "cell_scale_factors": [-0.10, -0.05, 0.0, 0.05, 0.10],
     "num_modes_to_return": 2,
-    "num_new_points_per_iteration": 10,
-    "ga_population_size": 20,
+    "num_new_points_per_iteration": 30,
+    "ga_population_size": 50,
     "ga_mutation_rate": 0.2
 }
 --- END FILE: {file_path} ---
@@ -1667,62 +1922,41 @@ def relax_structures_in_folder(folder_path: str, calculator: Calculator, engine:
                  print(f"  Relaxed structure saved to {relaxed_xyz_filepath}")  
                  summary_f.write(f"Relaxed XYZ File: {relaxed_xyz_filepath}\n")  
  
-                 cif_results = {    
-                       'original_file': original_filepath,    
-                       'relaxed_file': relaxed_filepath,    
-                       'energy': final_energy,    
-                       'energy_per_atom': final_energy_per_atom,  
-                       'relaxed_atoms': atoms.copy(),
-                       'num_atoms': len(atoms),  
-                      'international_symbol': best_dataset['international'] if best_dataset else 'N/A',  
-                      'crystal_system': crystal_system if best_dataset else 'N/A'
-                 }  
-                 relaxation_results.append(cif_results)    
                    
-                 # Perform symmetry analysis for the relaxed structure  
+                 # Perform symmetry analysis for the relaxed structure using the dedicated function  
+                 # This will also write the symmetry analysis to a file in the folder_path  
+                 best_dataset_for_relaxed, crystal_system_for_relaxed = analyze_symmetry(atoms, folder_path, prefix="relaxed_in_folder", auto_tune_symprec=True)  
+                   
+                 # Now, use these returned values in cif_results  
+                 cif_results = {      
+                       'original_file': original_filepath,      
+                       'relaxed_file': relaxed_filepath,      
+                       'energy': final_energy,      
+                       'energy_per_atom': final_energy_per_atom,    
+                       'relaxed_atoms': atoms.copy(),  
+                       'num_atoms': len(atoms),    
+                       'international_symbol': best_dataset_for_relaxed['international'] if best_dataset_for_relaxed else 'N/A',    
+                       'crystal_system': crystal_system_for_relaxed if best_dataset_for_relaxed else 'N/A'  
+                 }    
+                 relaxation_results.append(cif_results)      
+                     
+                 # Add symmetry info to the summary_f for this specific structure  
                  summary_f.write("\n  --- Relaxed Structure Symmetry Analysis ---\n")  
-                 cell = (atoms.get_cell(), atoms.get_scaled_positions(), atoms.get_atomic_numbers())  
-                 
-                 symprec = 1e-3 
-                 symprec_values = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]  
-                 best_spacegroup_num = 0  
-                 best_symprec_found = symprec  
-                 best_dataset = None  
-   
-                 for test_symprec in symprec_values:  
-                     dataset = spglib.get_symmetry_dataset(cell, symprec=test_symprec)  
-                     if dataset and dataset['number'] > best_spacegroup_num:  
-                         best_spacegroup_num = dataset['number']  
-                         best_symprec_found = test_symprec  
-                         best_dataset = dataset  
-               
-                 if best_dataset:  
-                     summary_f.write(f"  Symmetry Precision (Auto-tuned): {best_symprec_found:.4e}\n")  
-                     summary_f.write(f"  Space Group Number: {best_dataset['number']}\n")  
-                     summary_f.write(f"  International Symbol: {best_dataset['international']}\n")  
-                     summary_f.write(f"  Hall Symbol: {best_dataset['hall']}\n")  
-                     summary_f.write(f"  Point Group Symbol: {best_dataset['pointgroup']}\n")  
-                     
-                     crystal_system = "N/A"  
-                     try:  
-                         pmg_structure = AseAtomsAdaptor().get_structure(atoms)  
-                         sga = SpacegroupAnalyzer(pmg_structure, symprec=best_symprec_found)  
-                         crystal_system = sga.get_crystal_system()  
-                     except Exception as e:  
-                         summary_f.write(f"  Warning: Could not determine crystal system using Pymatgen: {e}\n")  
-                     summary_f.write(f"  Crystal System: {crystal_system}\n")  
-                     
-                     if 'lattice_type' in best_dataset:  
-                         summary_f.write(f"  Lattice Type: {best_dataset['lattice_type']}\n")  
+                 if best_dataset_for_relaxed:  
+                     summary_f.write(f"  Symmetry Precision (Auto-tuned): {best_dataset_for_relaxed.get('symprec_found', 'N/A')}\n") # Assuming symprec_found is added to dataset  
+                     summary_f.write(f"  Space Group Number: {best_dataset_for_relaxed['number']}\n")  
+                     summary_f.write(f"  International Symbol: {best_dataset_for_relaxed['international']}\n")  
+                     summary_f.write(f"  Hall Symbol: {best_dataset_for_relaxed['hall']}\n")  
+                     summary_f.write(f"  Point Group Symbol: {best_dataset_for_relaxed['pointgroup']}\n")  
+                     summary_f.write(f"  Crystal System: {crystal_system_for_relaxed}\n")  
+                     if 'lattice_type' in best_dataset_for_relaxed:  
+                         summary_f.write(f"  Lattice Type: {best_dataset_for_relaxed['lattice_type']}\n")  
                      else:  
                          summary_f.write("  Lattice Type: Not directly available from spglib dataset\n")  
-                     
-                     summary_f.write(f"  Number of atoms in primitive cell: {len(best_dataset['std_types'])}\n")  
-                     summary_f.write(f"  Transformation matrix to primitive cell:\n{np.array2string(best_dataset['transformation_matrix'], separator=', ')}\n")  
-                     summary_f.write(f"  Origin shift: {np.array2string(best_dataset['origin_shift'], separator=', ')}\n")  
+                     summary_f.write(f"  Number of atoms in primitive cell: {len(best_dataset_for_relaxed['std_types'])}\n")  
                  else:  
                      summary_f.write("  No symmetry found for the relaxed structure at any tested precision.\n")  
-                 summary_f.write("  -------------------------------------------\n\n")  
+                 summary_f.write("  -------------------------------------------\n\n")
              else: # Not converged
                  summary_f.write(f"Relaxation Status: FAIL (did not converge)\n")
                  summary_f.write(f"Final Energy: FAIL\n")
@@ -1897,6 +2131,7 @@ def analyze_symmetry(atoms, output_dir, prefix="", symprec=1e-3, auto_tune_sympr
             print(f"   Could not determine {prefix} symmetry for any tested symprec value.")
 
     print(f"» {prefix.capitalize()} symmetry analysis complete.")
+    return best_dataset, crystal_system
 
 def create_displaced_supercell_summary(mode_folder_path: str):  
     """  
@@ -2217,13 +2452,34 @@ def generate_displaced_supercells(primitive_atoms,
    new_beta = original_cell_params[4] + scale_beta
    new_gamma = original_cell_params[5] + scale_gamma
 
-   # Ensure angles are within reasonable bounds (e.g., 0 to 180 degrees)
-   new_alpha = np.clip(new_alpha, 1e-6, 179.999)
-   new_beta = np.clip(new_beta, 1e-6, 179.999)
-   new_gamma = np.clip(new_gamma, 1e-6, 179.999)
-
-   new_cell_params = (new_a, new_b, new_c, new_alpha, new_beta, new_gamma)
-   new_cell_matrix = Cell.fromcellpar(new_cell_params)
+   # --- START MODIFICATION FOR ROBUST ANGLE HANDLING ---  
+   # Ensure angles are strictly positive and less than 180, with a margin  
+   # This is crucial to avoid numerical issues that lead to cz_sqr < 0  
+   angle_min_bound = 5.0 # Keep angles at least 5 degrees away from 0  
+   angle_max_bound = 175.0 # Keep angles at least 5 degrees away from 180  
+  
+   new_alpha = np.clip(new_alpha, angle_min_bound, angle_max_bound)  
+   new_beta = np.clip(new_beta, angle_min_bound, angle_max_bound)  
+   new_gamma = np.clip(new_gamma, angle_min_bound, angle_max_bound)  
+  
+   new_cell_params = (new_a, new_b, new_c, new_alpha, new_beta, new_gamma)  
+  
+   try:  
+       from ase.geometry.cell import cellpar_to_cell
+       # Attempt to create the cell matrix. This is where the AssertionError happens.  
+       # We use cellpar_to_cell directly to catch the specific AssertionError.  
+       new_cell_matrix = cellpar_to_cell(new_cell_params)  
+   except AssertionError:  
+       print(f"Warning: Generated cell parameters are unphysical for sample {original_prefix} "  
+             f"with cell_transformation_vector {cell_transformation_vector}. "  
+             f"Resulting parameters: {new_cell_params}. Skipping this sample.")  
+       # Return an empty list, indicating no structures were generated for this sample.  
+       # The GA should then assign a very high (bad) fitness to this sample.  
+       return []  
+   except Exception as e:  
+       print(f"An unexpected error occurred while creating cell matrix for sample {original_prefix}: {e}. Skipping this sample.")  
+       return []  
+   # --- END MODIFICATION FOR ROBUST ANGLE HANDLING ---
 
    transformed_primitive_atoms.set_cell(new_cell_matrix, scale_atoms=True) # scale_atoms=True moves atoms proportionally
 

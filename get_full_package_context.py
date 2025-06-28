@@ -17,8 +17,8 @@ def concatenate_project_files(root_dir, output_file=None):
     # Order them logically for the LLM (e.g., README first, then setup, then source).
     files_to_include = [
         'README.md',
-        # 'setup.py',
-        # 'requirements.txt',
+        'environment.yml',
+        'requirements.txt',
         'vibroml/main.py',
         'vibroml/auto_optimize.py',
         'vibroml/default_settings.json',

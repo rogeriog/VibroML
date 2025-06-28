@@ -1,0 +1,16 @@
+[
+    {
+        "supercell_n": 2,
+        "delta": 0.05,
+        "fmax": 0.001,
+        "negative_frequency_at_special_point": -0.7430448424840171,
+        "time_taken": 14.702849388122559
+    },
+    {
+        "supercell_n": 3,
+        "delta": 0.03,
+        "fmax": 0.0005,
+        "negative_frequency_at_special_point": -0.7678297242376975,
+        "time_taken": 19.464969635009766
+    }
+]

@@ -292,26 +292,25 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
     elif args.units == "eV":
         threshold_in_current_units *= 4.135667696e-3
 
-    # Determine supercell variants based on symmetry (same logic as before)
-    cell = current_primitive_atoms.cell
-    lengths = np.linalg.norm(cell, axis=1)
-    angles = np.array([
-        np.arccos(np.dot(cell[1], cell[2]) / (lengths[1] * lengths[2])),
-        np.arccos(np.dot(cell[0], cell[2]) / (lengths[0] * lengths[2])),
-        np.arccos(np.dot(cell[0], cell[1]) / (lengths[0] * lengths[1]))
-    ])
-    is_cubic = (np.allclose(angles, np.pi / 2, atol=1e-3) and np.allclose(lengths, lengths[0], rtol=1e-3))
-    is_tetragonal = (np.allclose(angles, np.pi / 2, atol=1e-3) and any(np.allclose(lengths[i], lengths[j], rtol=1e-3) for i, j in [(0, 1), (1, 2), (0, 2)]))
-    is_hexagonal = (np.allclose(angles[0:2], np.pi / 2, atol=1e-3) and np.isclose(angles[2], np.pi * 2/3, atol=1e-3) and np.allclose(lengths[0:2], lengths[0], rtol=1e-3))
-    if is_cubic:
-        supercell_variants = [(1, 1, 1)] # [(1, 1, 1), (2, 2, 2), (2, 2, 1), (2, 1, 1)]
-    elif is_tetragonal:
-        supercell_variants = [(1, 1, 1), (2, 2, 2), (2, 2, 1), (2, 1, 2), (2, 1, 1)]
-    elif is_hexagonal:
-        supercell_variants = [(1, 1, 1), (2, 1, 2), (1, 2, 1), (1, 1, 2), (2, 2, 2)]
-    else:
-        supercell_variants = [(1, 1, 1), (2, 1, 1), (1, 2, 1), (1, 1, 2), (2, 2, 1), (2, 1, 2), (1, 2, 2), (2, 2, 2)]
-
+    # Determine supercell variants based on cell lengths  
+    cell = current_primitive_atoms.cell  
+    lengths = np.linalg.norm(cell, axis=1)  
+    
+    # Check for equality of lengths  
+    is_all_equal = np.allclose(lengths, lengths[0], rtol=1e-3)  
+    is_two_equal = (  
+        (np.allclose(lengths[0], lengths[1], rtol=1e-3) and not np.allclose(lengths[1], lengths[2], rtol=1e-3)) or  
+        (np.allclose(lengths[0], lengths[2], rtol=1e-3) and not np.allclose(lengths[0], lengths[1], rtol=1e-3)) or  
+        (np.allclose(lengths[1], lengths[2], rtol=1e-3) and not np.allclose(lengths[0], lengths[1], rtol=1e-3))  
+    )  
+    is_all_different = not is_all_equal and not is_two_equal  
+    
+    if is_all_equal:  
+        supercell_variants = [(1, 1, 1), (2, 1, 1), (2, 2, 1), (2, 2, 2)]  
+    elif is_two_equal:  
+        supercell_variants = [(1, 1, 1), (2, 1, 1), (1, 2, 1), (2, 2, 1), (2, 2, 2)]  
+    else: # is_all_different  
+        supercell_variants = [(1, 1, 1), (2, 1, 1), (1, 2, 1), (1, 1, 2), (2, 2, 1), (1, 2, 2), (2, 2, 2)]
     all_iterations_results = [] # Stores {'params': (disp_scale, ratio, cell_vec), 'fitness': energy, 'relaxed_atoms': atoms_obj, 'original_file': path}
 
     # Define GA parameter bounds

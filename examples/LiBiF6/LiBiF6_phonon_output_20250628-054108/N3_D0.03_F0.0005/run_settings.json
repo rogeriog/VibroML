@@ -1,0 +1,16 @@
+{
+    "cif": "LiBiF6.cif",
+    "no_relax": false,
+    "engine": "mace",
+    "units": "THz",
+    "model_name": "medium-omat-0",
+    "supercell_n": 3,
+    "delta": 0.03,
+    "fmax": 0.0005,
+    "auto": true,
+    "run_soft_mode_after_single": false,
+    "displace_primitive": false,
+    "ga_population_size": 50,
+    "ga_mutation_rate": 0.2,
+    "num_new_points_per_iteration": 30
+}

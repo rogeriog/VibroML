@@ -1,0 +1,15 @@
+Softest mode 2 at special point U ([0.625, 0.25, 0.625])
+Frequency: -0.8061 THz
+Band Index: 0
+
+Displacements (in primitive cell coordinates, scaled for visualization):
+Atom 1 (Cs): dx=0.064753, dy=-0.273135, dz=-0.351252 Å
+Atom 2 (Cs): dx=0.350190, dy=-0.087337, dz=-0.285725 Å
+Atom 3 (K): dx=-0.076163, dy=-0.108361, dz=-0.031546 Å
+Atom 4 (In): dx=0.109096, dy=-0.160135, dz=-0.002519 Å
+Atom 5 (I): dx=-0.211713, dy=0.074512, dz=-0.209539 Å
+Atom 6 (I): dx=-0.232626, dy=0.110615, dz=-0.163715 Å
+Atom 7 (I): dx=-0.172326, dy=0.333373, dz=-0.295877 Å
+Atom 8 (I): dx=-0.093658, dy=0.209065, dz=-0.289216 Å
+Atom 9 (I): dx=0.088249, dy=0.414801, dz=0.264862 Å
+Atom 10 (I): dx=0.096443, dy=0.327570, dz=0.243710 Å

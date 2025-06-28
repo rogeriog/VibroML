@@ -1,0 +1,508 @@
+start
+Sat Jun 28 05:41:03 CEST 2025
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1751082064.673707 3136713 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1751082064.677717 3136713 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1751082064.689310 3136713 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1751082064.689327 3136713 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1751082064.689328 3136713 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1751082064.689330 3136713 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+/auto/globalscratch/users/r/g/rgouvea/vibroml_env/lib/python3.9/site-packages/e3nn/o3/_wigner.py:10: UserWarning: Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected, since the`weights_only` argument was not explicitly passed to `torch.load`, forcing weights_only=False.
+  _Jd, _W3j_flat, _W3j_indices = torch.load(os.path.join(os.path.dirname(__file__), 'constants.pt'))
+/auto/globalscratch/users/r/g/rgouvea/vibroml_env/lib/python3.9/site-packages/mace/calculators/mace.py:143: UserWarning: Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected, since the`weights_only` argument was not explicitly passed to `torch.load`, forcing weights_only=False.
+  torch.load(f=model_path, map_location=device)
+/auto/globalscratch/users/r/g/rgouvea/vibroml_env/lib/python3.9/_collections_abc.py:769: DeprecationWarning: dict interface is deprecated. Use attribute interface instead
+  self[key]
+/auto/globalscratch/users/r/g/rgouvea/VibroML/vibroml/utils/relaxation_utils.py:28: FutureWarning: Please use atoms.calc = calc
+  atoms.set_calculator(calculator)
+/auto/globalscratch/users/r/g/rgouvea/VibroML/vibroml/utils/relaxation_utils.py:47: FutureWarning: Import UnitCellFilter from ase.filters
+  ucf = UnitCellFilter(atoms)
+/auto/globalscratch/users/r/g/rgouvea/VibroML/vibroml/utils/relaxation_utils.py:97: FutureWarning: Please use atoms.calc = calc
+  relaxed_atoms.set_calculator(calculator)
+/auto/globalscratch/users/r/g/rgouvea/VibroML/vibroml/utils/relaxation_utils.py:117: FutureWarning: Please use atoms.calc = calc
+  relaxed_atoms.set_calculator(calculator)
+/auto/globalscratch/users/r/g/rgouvea/vibroml_env/lib/python3.9/site-packages/pymatgen/io/cif.py:1721: FutureWarning: We strongly discourage using implicit binary/text `mode`, and this would not be allowed after 2025-06-01. I.e. you should pass t/b in `mode`.
+  with zopen(filename, mode=mode) as file:
+/auto/globalscratch/users/r/g/rgouvea/VibroML/vibroml/utils/phonon_utils.py:16: FutureWarning: Please use atoms.calc = calc
+  atoms.set_calculator(calculator) # Ensure calculator is set for phonon calculation
+/auto/globalscratch/users/r/g/rgouvea/VibroML/vibroml/utils/phonon_utils.py:16: FutureWarning: Please use atoms.calc = calc
+  atoms.set_calculator(calculator) # Ensure calculator is set for phonon calculation
+slurmstepd: error: unable to open '/proc/0/cgroup' for reading : No such file or directory
+slurmstepd: error: unable to open '/proc/0/cgroup' for reading : No such file or directory
+/auto/globalscratch/users/r/g/rgouvea/VibroML/vibroml/utils/phonon_utils.py:16: FutureWarning: Please use atoms.calc = calc
+  atoms.set_calculator(calculator) # Ensure calculator is set for phonon calculation
+slurmstepd: error: unable to open '/proc/0/cgroup' for reading : No such file or directory
+slurmstepd: error: unable to open '/proc/0/cgroup' for reading : No such file or directory
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+--- Step 0.0: Loading Default Settings ---
+Default settings loaded from /auto/globalscratch/users/r/g/rgouvea/VibroML/vibroml/default_settings.json
+--- Step 0.1: Parsing Command Line Arguments ---
+
+--- Step 0.2: Setting up Output Directory and Cleaning Cache ---
+Output directory created: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108
+Initial settings saved.
+
+--- Step 0.3: Running in Parameter Sweep Auto Optimization Mode ---
+Running in parameter sweep auto mode to find optimal settings...
+
+--- Loading and potentially relaxing initial structure for parameter sweep ---
+Successfully loaded structure from LiBiF6.cif
+CUDA is available. Using GPU for MACE calculation.
+Initializing MACE calculator on device: cuda...
+Using model under Academic Software License (ASL) license, see https://github.com/gabor1/ASL 
+ To use this model you accept the terms of the license.
+Using Materials Project MACE for MACECalculator with /home/ucl/modl/rgouvea/.cache/mace/maceomat0mediummodel
+Using float64 for MACECalculator, which is slower but more accurate. Recommended for geometry optimization.
+Using head default out of ['default']
+MACE calculator initialized.
+
+» MACE relaxation starting…
+
+--- Analyzing Initial Structure Symmetry ---
+
+» Analyzing initial structure symmetry with spglib…
+   Attempting to auto-tune symprec to find highest symmetry...
+   Highest symmetry found (Space Group 148) at symprec = 1.0000e-04
+
+--- Spglib Warnings Summary ---
+Spglib generated warnings during symmetry analysis. These are often related to precision issues.
+-------------------------------
+
+
+--- DEBUG: Contents of best_dataset ---
+best_dataset is an object. Attempting to list attributes:
+Space Group: 148
+International Symbol: R-3
+Hall Symbol: -R 3
+Point Group: -3
+---------------------------------------
+   Initial symmetry analysis saved to: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/initial_relaxation_for_sweep/initial_symmetry_analysis.txt
+» Initial symmetry analysis complete.
+------------------------------------------
+   Initial energy: -101.210691 eV
+   Initial energy per atom: -4.217112 eV/atom
+   MACE relaxation log will be written to: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/initial_relaxation_for_sweep/relax.log
+   MACE relaxation trajectory will be written to: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/initial_relaxation_for_sweep/relax.traj
+» MACE relaxation finished in 4.26 seconds.
+   Relaxation converged! Max force (0.0006) <= fmax (0.0010)
+   Final energy: -101.972040 eV
+   Final energy per atom: -4.248835 eV/atom
+
+### Relaxation Results ###
+   Cell Parameters Change:
+      Initial (a, b, c, alpha, beta, gamma): 5.0623, 5.0623, 13.9966, 90.00, 90.00, 120.00
+      Final   (a, b, c, alpha, beta, gamma): 5.5027, 5.5027, 14.3087, 90.00, 90.00, 120.00
+      Difference (a, b, c): 0.4404, 0.4404, 0.3121
+      Difference (alpha, beta, gamma): -0.00, 0.00, 0.00
+
+   Fractional Coordinates After Relaxation:
+      Atom 1: 1.000000, 1.000000, 0.500000
+      Atom 2: 0.666667, 0.333333, 0.833333
+      Atom 3: 0.333333, 0.666667, 0.166667
+      Atom 4: 1.000000, 0.000000, 0.000000
+      Atom 5: 0.666667, 0.333333, 0.333333
+      Atom 6: 0.333333, 0.666667, 0.666667
+      Atom 7: 0.996708, 0.602252, 0.250631
+      Atom 8: 0.003292, 0.397748, 0.749369
+      Atom 9: 0.397748, 0.394455, 0.250631
+      Atom 10: 0.602252, 0.605545, 0.749369
+      Atom 11: 0.605545, 0.003292, 0.250631
+      Atom 12: 0.394455, 0.996708, 0.749369
+      Atom 13: 0.663374, 0.935586, 0.583965
+      Atom 14: 0.669959, 0.731081, 0.082702
+      Atom 15: 0.064414, 0.727789, 0.583965
+      Atom 16: 0.268919, 0.938878, 0.082702
+      Atom 17: 0.272211, 0.336626, 0.583965
+      Atom 18: 0.061122, 0.330041, 0.082702
+      Atom 19: 0.330041, 0.268919, 0.917298
+      Atom 20: 0.336626, 0.064414, 0.416035
+      Atom 21: 0.731081, 0.061122, 0.917298
+      Atom 22: 0.935586, 0.272211, 0.416035
+      Atom 23: 0.938878, 0.669959, 0.917298
+      Atom 24: 0.727789, 0.663374, 0.416035
+
+   Maximum atomic displacement during relaxation: 0.5638 Å
+
+   Initial stress (GPa):
+[-4.39142341e-11 -4.39142341e-11 -4.25960656e-11 -6.68133349e-26
+ -1.05174285e-25 -1.85850863e-26]
+   Final stress (GPa):
+[ 2.97645878e-14  2.97645880e-14  1.40843096e-14  6.75141762e-24
+ -9.78157917e-23  1.80614984e-23]
+Relaxed structure saved to: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/initial_relaxation_for_sweep/LiBiF6_relaxed_mace_f0.001.cif
+Converted relaxation trajectory to XYZ: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/initial_relaxation_for_sweep/relax.xyz
+
+Structure relaxed.
+
+--- Analyzing Relaxed Structure Symmetry ---
+
+» Analyzing relaxed structure symmetry with spglib…
+   Attempting to auto-tune symprec to find highest symmetry...
+   Highest symmetry found (Space Group 148) at symprec = 1.0000e-04
+
+--- DEBUG: Contents of best_dataset ---
+best_dataset is an object. Attempting to list attributes:
+Space Group: 148
+International Symbol: R-3
+Hall Symbol: -R 3
+Point Group: -3
+---------------------------------------
+   Relaxed symmetry analysis saved to: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/initial_relaxation_for_sweep/relaxed_symmetry_analysis.txt
+» Relaxed symmetry analysis complete.
+------------------------------------------
+
+--- Testing Supercell N: 2, Delta: 0.05, Fmax: 0.001 ---
+
+--- Running Single Phonon Analysis in: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001 ---
+
+--- Step 1: Running Phonon Calculation ---
+
+### Structure for Phonon Calculation ###
+   The phonon band structure will be calculated using the current structure.
+   Using supercell size: (2, 2, 2)
+   Using displacement delta: 0.05
+Phonon calculation completed.
+
+--- Step 2: Getting and Processing Phonon Results ---
+Most negative frequency: -1.9341 THz
+
+--- Step 3: Saving Raw Data ---
+Raw band structure and DOS data saved.
+
+--- Step 4: Plotting Results ---
+Phonon band structure and DOS plot saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001/phonon_bs_dos_LiBiF6_N2_D0.05_F0.001.png and /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001/phonon_bs_dos_LiBiF6_N2_D0.05_F0.001.svg
+
+--- Step 5: Analyzing Special Points and Top 2 Softest Modes ---
+
+--- Analyzing Special K-points ---
+   Special Point: G (0.0000, 0.0000, 0.0000) - Minimum Frequency: -0.1738 THz
+   Special Point: M (0.5000, 0.0000, 0.0000) - Minimum Frequency: 1.4264 THz
+   Special Point: K (0.3333, 0.3333, 0.0000) - Minimum Frequency: -1.8446 THz
+   Special Point: G (0.0000, 0.0000, 0.0000) - Minimum Frequency: -0.1738 THz
+   Special Point: A (0.0000, 0.0000, 0.5000) - Minimum Frequency: 0.6240 THz
+   Special Point: L (0.5000, 0.0000, 0.5000) - Minimum Frequency: 1.4058 THz
+   Special Point: H (0.3333, 0.3333, 0.5000) - Minimum Frequency: -1.8319 THz
+   Special Point: A (0.0000, 0.0000, 0.5000) - Minimum Frequency: 0.6240 THz
+   Special Point: L (0.5000, 0.0000, 0.5000) - Minimum Frequency: 1.4058 THz
+   Special Point: M (0.5000, 0.0000, 0.0000) - Minimum Frequency: 1.4264 THz
+   Special Point: K (0.3333, 0.3333, 0.0000) - Minimum Frequency: -1.8446 THz
+   Special Point: H (0.3333, 0.3333, 0.5000) - Minimum Frequency: -1.8319 THz
+
+Special point analysis saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001/special_point_analysis.json
+
+--- Top 2 Softest Modes Analysis ---
+
+Mode 1:
+   Label: K
+   Coordinate: (0.3333, 0.3333, 0.0000)
+   Frequency: -1.8446 THz
+   Band Index: 0
+WARNING, 4 imaginary frequencies at q = ( 0.33,  0.33,  0.00) ; (omega_q = 1.180e-01*i)
+Displacements for this mode (in primitive cell coordinates, scaled for visualization):
+   Atom 1 (Li): dx=-0.109257, dy=-0.048560, dz=-0.042498 Å
+   Atom 2 (Li): dx=0.222516, dy=-0.276057, dz=0.272212 Å
+   Atom 3 (Li): dx=0.305973, dy=-0.094281, dz=0.300284 Å
+   Atom 4 (Bi): dx=-0.024914, dy=0.186771, dz=0.244432 Å
+   Atom 5 (Bi): dx=-0.166087, dy=0.078135, dz=-0.026413 Å
+   Atom 6 (Bi): dx=0.201894, dy=-0.167797, dz=-0.012072 Å
+   Atom 7 (F): dx=0.068232, dy=-0.014465, dz=0.094023 Å
+   Atom 8 (F): dx=0.263866, dy=-0.135611, dz=0.108956 Å
+   Atom 9 (F): dx=-0.106775, dy=0.182527, dz=-0.067507 Å
+   Atom 10 (F): dx=0.004225, dy=-0.300562, dz=0.199294 Å
+   Atom 11 (F): dx=0.262854, dy=-0.075161, dz=-0.012259 Å
+   Atom 12 (F): dx=0.063918, dy=-0.037172, dz=0.242100 Å
+   Atom 13 (F): dx=0.226246, dy=-0.043649, dz=0.170622 Å
+   Atom 14 (F): dx=0.411694, dy=-0.267646, dz=-0.028979 Å
+   Atom 15 (F): dx=0.391911, dy=-0.130187, dz=-0.268371 Å
+   Atom 16 (F): dx=-0.272644, dy=-0.203848, dz=-0.128182 Å
+   Atom 17 (F): dx=0.206401, dy=-0.238002, dz=0.106027 Å
+   Atom 18 (F): dx=0.182956, dy=0.050933, dz=0.462529 Å
+   Atom 19 (F): dx=0.021254, dy=0.083776, dz=0.182705 Å
+   Atom 20 (F): dx=-0.278209, dy=0.060060, dz=-0.152013 Å
+   Atom 21 (F): dx=-0.295911, dy=-0.278777, dz=-0.150300 Å
+   Atom 22 (F): dx=-0.330766, dy=0.054804, dz=0.203009 Å
+   Atom 23 (F): dx=0.305993, dy=-0.097737, dz=-0.130427 Å
+   Atom 24 (F): dx=-0.161884, dy=0.116306, dz=-0.074186 Å
+Displacements for mode 1 saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001/softest_mode_1_K_band0_displacements.txt
+WARNING, 4 imaginary frequencies at q = ( 0.33,  0.33,  0.00) ; (omega_q = 1.180e-01*i)
+Mode 1 animation (ASE .traj) saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001/softest_mode_1_K_band0.mode.0.traj
+Converted trajectory to XYZ: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001/softest_mode_1_K_band0.xyz
+
+Mode 2:
+   Label: H
+   Coordinate: (0.3333, 0.3333, 0.5000)
+   Frequency: -1.8319 THz
+   Band Index: 0
+WARNING, 4 imaginary frequencies at q = ( 0.33,  0.33,  0.50) ; (omega_q = 1.172e-01*i)
+Displacements for this mode (in primitive cell coordinates, scaled for visualization):
+   Atom 1 (Li): dx=-0.045309, dy=-0.023441, dz=0.046723 Å
+   Atom 2 (Li): dx=-0.128674, dy=-0.357528, dz=-0.119405 Å
+   Atom 3 (Li): dx=-0.084160, dy=0.136152, dz=-0.104377 Å
+   Atom 4 (Bi): dx=0.358753, dy=-0.161898, dz=0.034854 Å
+   Atom 5 (Bi): dx=-0.160267, dy=0.081862, dz=-0.035012 Å
+   Atom 6 (Bi): dx=0.245197, dy=-0.123115, dz=0.072585 Å
+   Atom 7 (F): dx=-0.059358, dy=-0.055510, dz=-0.074244 Å
+   Atom 8 (F): dx=-0.060484, dy=0.049754, dz=-0.006612 Å
+   Atom 9 (F): dx=-0.070687, dy=0.183419, dz=-0.113517 Å
+   Atom 10 (F): dx=0.170177, dy=-0.337569, dz=0.100544 Å
+   Atom 11 (F): dx=0.035750, dy=-0.053916, dz=-0.043610 Å
+   Atom 12 (F): dx=-0.351055, dy=0.014500, dz=0.112569 Å
+   Atom 13 (F): dx=0.385774, dy=-0.135426, dz=0.181315 Å
+   Atom 14 (F): dx=-0.241638, dy=-0.043870, dz=-0.182181 Å
+   Atom 15 (F): dx=0.446594, dy=-0.051729, dz=-0.218811 Å
+   Atom 16 (F): dx=0.066177, dy=0.438575, dz=-0.062455 Å
+   Atom 17 (F): dx=0.194367, dy=-0.191142, dz=0.138777 Å
+   Atom 18 (F): dx=0.319754, dy=-0.012649, dz=-0.150091 Å
+   Atom 19 (F): dx=-0.332448, dy=0.076089, dz=-0.091627 Å
+   Atom 20 (F): dx=-0.204913, dy=0.036432, dz=-0.123079 Å
+   Atom 21 (F): dx=0.226605, dy=-0.288391, dz=-0.337053 Å
+   Atom 22 (F): dx=-0.272688, dy=0.076826, dz=0.123788 Å
+   Atom 23 (F): dx=0.013062, dy=0.030330, dz=0.124003 Å
+   Atom 24 (F): dx=-0.162241, dy=0.092312, dz=-0.063285 Å
+Displacements for mode 2 saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001/softest_mode_2_H_band0_displacements.txt
+WARNING, 4 imaginary frequencies at q = ( 0.33,  0.33,  0.50) ; (omega_q = 1.172e-01*i)
+Mode 2 animation (ASE .traj) saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001/softest_mode_2_H_band0.mode.0.traj
+Converted trajectory to XYZ: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001/softest_mode_2_H_band0.xyz
+Comprehensive phonon run summary saved to: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N2_D0.05_F0.001/LiBiF6_phonon_run_summary.txt
+Total time taken for this phonon analysis: 125.53 s
+
+--- Testing Supercell N: 3, Delta: 0.03, Fmax: 0.0005 ---
+
+--- Running Single Phonon Analysis in: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005 ---
+
+--- Step 1: Running Phonon Calculation ---
+
+### Structure for Phonon Calculation ###
+   The phonon band structure will be calculated using the current structure.
+   Using supercell size: (3, 3, 3)
+   Using displacement delta: 0.03
+Phonon calculation completed.
+
+--- Step 2: Getting and Processing Phonon Results ---
+Most negative frequency: -0.0738 THz
+
+--- Step 3: Saving Raw Data ---
+Raw band structure and DOS data saved.
+
+--- Step 4: Plotting Results ---
+Phonon band structure and DOS plot saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005/phonon_bs_dos_LiBiF6_N3_D0.03_F0.0005.png and /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005/phonon_bs_dos_LiBiF6_N3_D0.03_F0.0005.svg
+
+--- Step 5: Analyzing Special Points and Top 2 Softest Modes ---
+
+--- Analyzing Special K-points ---
+   Special Point: G (0.0000, 0.0000, 0.0000) - Minimum Frequency: -0.0004 THz
+   Special Point: M (0.5000, 0.0000, 0.0000) - Minimum Frequency: 1.3957 THz
+   Special Point: K (0.3333, 0.3333, 0.0000) - Minimum Frequency: 1.5487 THz
+   Special Point: G (0.0000, 0.0000, 0.0000) - Minimum Frequency: -0.0004 THz
+   Special Point: A (0.0000, 0.0000, 0.5000) - Minimum Frequency: 0.6412 THz
+   Special Point: L (0.5000, 0.0000, 0.5000) - Minimum Frequency: 1.3846 THz
+   Special Point: H (0.3333, 0.3333, 0.5000) - Minimum Frequency: 1.5593 THz
+   Special Point: A (0.0000, 0.0000, 0.5000) - Minimum Frequency: 0.6412 THz
+   Special Point: L (0.5000, 0.0000, 0.5000) - Minimum Frequency: 1.3846 THz
+   Special Point: M (0.5000, 0.0000, 0.0000) - Minimum Frequency: 1.3957 THz
+   Special Point: K (0.3333, 0.3333, 0.0000) - Minimum Frequency: 1.5487 THz
+   Special Point: H (0.3333, 0.3333, 0.5000) - Minimum Frequency: 1.5593 THz
+
+Special point analysis saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005/special_point_analysis.json
+
+--- Top 2 Softest Modes Analysis ---
+
+Mode 1:
+   Label: G
+   Coordinate: (0.0000, 0.0000, 0.0000)
+   Frequency: -0.0004 THz
+   Band Index: 0
+WARNING, 2 imaginary frequencies at q = ( 0.00,  0.00,  0.00) ; (omega_q = 2.342e-05*i)
+Displacements for this mode (in primitive cell coordinates, scaled for visualization):
+   Atom 1 (Li): dx=-0.488021, dy=0.108762, dz=0.000038 Å
+   Atom 2 (Li): dx=-0.488021, dy=0.108762, dz=0.000038 Å
+   Atom 3 (Li): dx=-0.488021, dy=0.108762, dz=0.000038 Å
+   Atom 4 (Bi): dx=-0.488009, dy=0.108753, dz=-0.000005 Å
+   Atom 5 (Bi): dx=-0.488009, dy=0.108753, dz=-0.000005 Å
+   Atom 6 (Bi): dx=-0.488009, dy=0.108753, dz=-0.000005 Å
+   Atom 7 (F): dx=-0.488027, dy=0.108764, dz=-0.000016 Å
+   Atom 8 (F): dx=-0.488027, dy=0.108764, dz=-0.000016 Å
+   Atom 9 (F): dx=-0.487977, dy=0.108814, dz=-0.000034 Å
+   Atom 10 (F): dx=-0.487977, dy=0.108814, dz=-0.000034 Å
+   Atom 11 (F): dx=-0.488000, dy=0.108709, dz=0.000070 Å
+   Atom 12 (F): dx=-0.488000, dy=0.108709, dz=0.000070 Å
+   Atom 13 (F): dx=-0.488027, dy=0.108764, dz=-0.000016 Å
+   Atom 14 (F): dx=-0.488027, dy=0.108764, dz=-0.000016 Å
+   Atom 15 (F): dx=-0.487977, dy=0.108814, dz=-0.000034 Å
+   Atom 16 (F): dx=-0.487977, dy=0.108814, dz=-0.000034 Å
+   Atom 17 (F): dx=-0.488000, dy=0.108709, dz=0.000070 Å
+   Atom 18 (F): dx=-0.488000, dy=0.108709, dz=0.000070 Å
+   Atom 19 (F): dx=-0.488027, dy=0.108764, dz=-0.000016 Å
+   Atom 20 (F): dx=-0.488027, dy=0.108764, dz=-0.000016 Å
+   Atom 21 (F): dx=-0.487977, dy=0.108814, dz=-0.000034 Å
+   Atom 22 (F): dx=-0.487977, dy=0.108814, dz=-0.000034 Å
+   Atom 23 (F): dx=-0.488000, dy=0.108709, dz=0.000070 Å
+   Atom 24 (F): dx=-0.488000, dy=0.108709, dz=0.000070 Å
+Displacements for mode 1 saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005/softest_mode_1_G_band0_displacements.txt
+WARNING, 2 imaginary frequencies at q = ( 0.00,  0.00,  0.00) ; (omega_q = 2.342e-05*i)
+Mode 1 animation (ASE .traj) saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005/softest_mode_1_G_band0.mode.0.traj
+Converted trajectory to XYZ: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005/softest_mode_1_G_band0.xyz
+
+Mode 2:
+   Label: G
+   Coordinate: (0.0000, 0.0000, 0.0000)
+   Frequency: -0.0003 THz
+   Band Index: 1
+WARNING, 2 imaginary frequencies at q = ( 0.00,  0.00,  0.00) ; (omega_q = 2.342e-05*i)
+Displacements for this mode (in primitive cell coordinates, scaled for visualization):
+   Atom 1 (Li): dx=0.108782, dy=0.488023, dz=0.000009 Å
+   Atom 2 (Li): dx=0.108782, dy=0.488023, dz=0.000009 Å
+   Atom 3 (Li): dx=0.108782, dy=0.488023, dz=0.000009 Å
+   Atom 4 (Bi): dx=0.108765, dy=0.488027, dz=0.000000 Å
+   Atom 5 (Bi): dx=0.108765, dy=0.488027, dz=0.000000 Å
+   Atom 6 (Bi): dx=0.108765, dy=0.488027, dz=0.000000 Å
+   Atom 7 (F): dx=0.108733, dy=0.487995, dz=-0.000066 Å
+   Atom 8 (F): dx=0.108733, dy=0.487995, dz=-0.000066 Å
+   Atom 9 (F): dx=0.108736, dy=0.488028, dz=0.000044 Å
+   Atom 10 (F): dx=0.108736, dy=0.488028, dz=0.000044 Å
+   Atom 11 (F): dx=0.108777, dy=0.488016, dz=0.000019 Å
+   Atom 12 (F): dx=0.108777, dy=0.488016, dz=0.000019 Å
+   Atom 13 (F): dx=0.108733, dy=0.487995, dz=-0.000066 Å
+   Atom 14 (F): dx=0.108733, dy=0.487995, dz=-0.000066 Å
+   Atom 15 (F): dx=0.108736, dy=0.488028, dz=0.000044 Å
+   Atom 16 (F): dx=0.108736, dy=0.488028, dz=0.000044 Å
+   Atom 17 (F): dx=0.108777, dy=0.488016, dz=0.000019 Å
+   Atom 18 (F): dx=0.108777, dy=0.488016, dz=0.000019 Å
+   Atom 19 (F): dx=0.108733, dy=0.487995, dz=-0.000066 Å
+   Atom 20 (F): dx=0.108733, dy=0.487995, dz=-0.000066 Å
+   Atom 21 (F): dx=0.108736, dy=0.488028, dz=0.000044 Å
+   Atom 22 (F): dx=0.108736, dy=0.488028, dz=0.000044 Å
+   Atom 23 (F): dx=0.108777, dy=0.488016, dz=0.000019 Å
+   Atom 24 (F): dx=0.108777, dy=0.488016, dz=0.000019 Å
+Displacements for mode 2 saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005/softest_mode_2_G_band1_displacements.txt
+WARNING, 2 imaginary frequencies at q = ( 0.00,  0.00,  0.00) ; (omega_q = 2.342e-05*i)
+Mode 2 animation (ASE .traj) saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005/softest_mode_2_G_band1.mode.1.traj
+Converted trajectory to XYZ: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005/softest_mode_2_G_band1.xyz
+Comprehensive phonon run summary saved to: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N3_D0.03_F0.0005/LiBiF6_phonon_run_summary.txt
+Total time taken for this phonon analysis: 264.82 s
+
+--- Testing Supercell N: 4, Delta: 0.01, Fmax: 0.0001 ---
+
+--- Running Single Phonon Analysis in: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001 ---
+
+--- Step 1: Running Phonon Calculation ---
+
+### Structure for Phonon Calculation ###
+   The phonon band structure will be calculated using the current structure.
+   Using supercell size: (4, 4, 4)
+   Using displacement delta: 0.01
+Phonon calculation completed.
+
+--- Step 2: Getting and Processing Phonon Results ---
+Most negative frequency: -0.1357 THz
+
+--- Step 3: Saving Raw Data ---
+Raw band structure and DOS data saved.
+
+--- Step 4: Plotting Results ---
+Phonon band structure and DOS plot saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001/phonon_bs_dos_LiBiF6_N4_D0.01_F0.0001.png and /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001/phonon_bs_dos_LiBiF6_N4_D0.01_F0.0001.svg
+
+--- Step 5: Analyzing Special Points and Top 2 Softest Modes ---
+
+--- Analyzing Special K-points ---
+   Special Point: G (0.0000, 0.0000, 0.0000) - Minimum Frequency: -0.0055 THz
+   Special Point: M (0.5000, 0.0000, 0.0000) - Minimum Frequency: 1.4427 THz
+   Special Point: K (0.3333, 0.3333, 0.0000) - Minimum Frequency: 1.5355 THz
+   Special Point: G (0.0000, 0.0000, 0.0000) - Minimum Frequency: -0.0055 THz
+   Special Point: A (0.0000, 0.0000, 0.5000) - Minimum Frequency: 0.6441 THz
+   Special Point: L (0.5000, 0.0000, 0.5000) - Minimum Frequency: 1.4195 THz
+   Special Point: H (0.3333, 0.3333, 0.5000) - Minimum Frequency: 1.5429 THz
+   Special Point: A (0.0000, 0.0000, 0.5000) - Minimum Frequency: 0.6441 THz
+   Special Point: L (0.5000, 0.0000, 0.5000) - Minimum Frequency: 1.4195 THz
+   Special Point: M (0.5000, 0.0000, 0.0000) - Minimum Frequency: 1.4427 THz
+   Special Point: K (0.3333, 0.3333, 0.0000) - Minimum Frequency: 1.5355 THz
+   Special Point: H (0.3333, 0.3333, 0.5000) - Minimum Frequency: 1.5429 THz
+
+Special point analysis saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001/special_point_analysis.json
+
+--- Top 2 Softest Modes Analysis ---
+
+Mode 1:
+   Label: G
+   Coordinate: (0.0000, 0.0000, 0.0000)
+   Frequency: -0.0055 THz
+   Band Index: 0
+WARNING, 2 imaginary frequencies at q = ( 0.00,  0.00,  0.00) ; (omega_q = 3.510e-04*i)
+Displacements for this mode (in primitive cell coordinates, scaled for visualization):
+   Atom 1 (Li): dx=-0.311608, dy=-0.375199, dz=-0.110050 Å
+   Atom 2 (Li): dx=-0.311616, dy=-0.375200, dz=-0.110051 Å
+   Atom 3 (Li): dx=-0.311615, dy=-0.375195, dz=-0.110046 Å
+   Atom 4 (Bi): dx=-0.311620, dy=-0.375199, dz=-0.110048 Å
+   Atom 5 (Bi): dx=-0.311607, dy=-0.375196, dz=-0.110047 Å
+   Atom 6 (Bi): dx=-0.311607, dy=-0.375202, dz=-0.110051 Å
+   Atom 7 (F): dx=-0.311600, dy=-0.375191, dz=-0.110034 Å
+   Atom 8 (F): dx=-0.311608, dy=-0.375200, dz=-0.110048 Å
+   Atom 9 (F): dx=-0.311602, dy=-0.375191, dz=-0.110053 Å
+   Atom 10 (F): dx=-0.311607, dy=-0.375200, dz=-0.110050 Å
+   Atom 11 (F): dx=-0.311606, dy=-0.375192, dz=-0.110050 Å
+   Atom 12 (F): dx=-0.311612, dy=-0.375201, dz=-0.110054 Å
+   Atom 13 (F): dx=-0.311598, dy=-0.375197, dz=-0.110037 Å
+   Atom 14 (F): dx=-0.311621, dy=-0.375194, dz=-0.110044 Å
+   Atom 15 (F): dx=-0.311599, dy=-0.375203, dz=-0.110063 Å
+   Atom 16 (F): dx=-0.311621, dy=-0.375204, dz=-0.110049 Å
+   Atom 17 (F): dx=-0.311603, dy=-0.375202, dz=-0.110048 Å
+   Atom 18 (F): dx=-0.311618, dy=-0.375199, dz=-0.110047 Å
+   Atom 19 (F): dx=-0.311613, dy=-0.375200, dz=-0.110043 Å
+   Atom 20 (F): dx=-0.311605, dy=-0.375193, dz=-0.110043 Å
+   Atom 21 (F): dx=-0.311615, dy=-0.375193, dz=-0.110055 Å
+   Atom 22 (F): dx=-0.311607, dy=-0.375195, dz=-0.110048 Å
+   Atom 23 (F): dx=-0.311629, dy=-0.375203, dz=-0.110046 Å
+   Atom 24 (F): dx=-0.311611, dy=-0.375197, dz=-0.110046 Å
+Displacements for mode 1 saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001/softest_mode_1_G_band0_displacements.txt
+WARNING, 2 imaginary frequencies at q = ( 0.00,  0.00,  0.00) ; (omega_q = 3.510e-04*i)
+Mode 1 animation (ASE .traj) saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001/softest_mode_1_G_band0.mode.0.traj
+Converted trajectory to XYZ: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001/softest_mode_1_G_band0.xyz
+
+Mode 2:
+   Label: G
+   Coordinate: (0.0000, 0.0000, 0.0000)
+   Frequency: -0.0021 THz
+   Band Index: 1
+WARNING, 2 imaginary frequencies at q = ( 0.00,  0.00,  0.00) ; (omega_q = 3.510e-04*i)
+Displacements for this mode (in primitive cell coordinates, scaled for visualization):
+   Atom 1 (Li): dx=0.370330, dy=-0.238040, dz=-0.237047 Å
+   Atom 2 (Li): dx=0.370327, dy=-0.238044, dz=-0.237044 Å
+   Atom 3 (Li): dx=0.370324, dy=-0.238040, dz=-0.237044 Å
+   Atom 4 (Bi): dx=0.370323, dy=-0.238041, dz=-0.237036 Å
+   Atom 5 (Bi): dx=0.370327, dy=-0.238038, dz=-0.237042 Å
+   Atom 6 (Bi): dx=0.370331, dy=-0.238040, dz=-0.237040 Å
+   Atom 7 (F): dx=0.370326, dy=-0.238034, dz=-0.237039 Å
+   Atom 8 (F): dx=0.370331, dy=-0.238038, dz=-0.237038 Å
+   Atom 9 (F): dx=0.370322, dy=-0.238045, dz=-0.237037 Å
+   Atom 10 (F): dx=0.370327, dy=-0.238050, dz=-0.237037 Å
+   Atom 11 (F): dx=0.370325, dy=-0.238032, dz=-0.237052 Å
+   Atom 12 (F): dx=0.370331, dy=-0.238034, dz=-0.237050 Å
+   Atom 13 (F): dx=0.370339, dy=-0.238042, dz=-0.237034 Å
+   Atom 14 (F): dx=0.370326, dy=-0.238038, dz=-0.237031 Å
+   Atom 15 (F): dx=0.370329, dy=-0.238040, dz=-0.237037 Å
+   Atom 16 (F): dx=0.370321, dy=-0.238043, dz=-0.237033 Å
+   Atom 17 (F): dx=0.370327, dy=-0.238034, dz=-0.237050 Å
+   Atom 18 (F): dx=0.370323, dy=-0.238034, dz=-0.237045 Å
+   Atom 19 (F): dx=0.370327, dy=-0.238043, dz=-0.237035 Å
+   Atom 20 (F): dx=0.370333, dy=-0.238038, dz=-0.237036 Å
+   Atom 21 (F): dx=0.370321, dy=-0.238046, dz=-0.237035 Å
+   Atom 22 (F): dx=0.370325, dy=-0.238044, dz=-0.237041 Å
+   Atom 23 (F): dx=0.370318, dy=-0.238039, dz=-0.237042 Å
+   Atom 24 (F): dx=0.370326, dy=-0.238034, dz=-0.237047 Å
+Displacements for mode 2 saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001/softest_mode_2_G_band1_displacements.txt
+WARNING, 2 imaginary frequencies at q = ( 0.00,  0.00,  0.00) ; (omega_q = 3.510e-04*i)
+Mode 2 animation (ASE .traj) saved to /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001/softest_mode_2_G_band1.mode.1.traj
+Converted trajectory to XYZ: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001/softest_mode_2_G_band1.xyz
+Comprehensive phonon run summary saved to: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/LiBiF6/LiBiF6_phonon_output_20250628-054108/N4_D0.01_F0.0001/LiBiF6_phonon_run_summary.txt
+Total time taken for this phonon analysis: 551.62 s
+Improvement in negative frequency (0.0000 THz) is less than 0.0500 THz. Stopping parameter sweep.
+
+--- Parameter sweep auto-optimization complete ---
+Most negative frequency at a special point found: -0.0738 THz
+Optimal settings: Supercell N = 3, Delta = 0.03, Fmax = 0.0005
+
+No significant soft mode detected after parameter sweep, or structure is stable enough. Skipping iterative soft mode optimization.
+
+--- Phonon Calculation Script Finished ---
+done
+Sat Jun 28 05:56:56 CEST 2025

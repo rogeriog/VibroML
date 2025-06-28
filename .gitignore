@@ -20,22 +20,5 @@ wheels/
 .installed.cfg
 *.egg
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Environment
-.env
-.venv
-env/
-venv/
-ENV/
-
-# Examples and notebooks
-examples/
-notebooks/
-
-# Misc
-.DS_Store
+get_full_package_context.py
+vibroml_full_package_context.txt

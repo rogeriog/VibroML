@@ -1,3 +1,4 @@
+
 ### VibroML
 
 [![PyPI Version](https://img.shields.io/pypi/v/vibroml.svg)](https://pypi.org/project/vibroml/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -17,6 +18,7 @@ This end-to-end workflow significantly reduces manual intervention, accelerating
 -   **Phonon-Only Mode:** Quickly compute phonon band structures and DOS, with detailed reporting of imaginary modes. Ideal for initial stability checks.
 -   **Auto-Screen Mode:** An intelligent, automated pipeline to detect unstable modes, displace atoms along them, re-optimize the structure, and iteratively stabilize it. This mode includes a parameter sweep to find optimal calculation settings.
 -   **Soft-Mode Iterative Optimization:** A dedicated workflow to systematically explore stable configurations by displacing along soft modes and relaxing, iterating until stability is achieved or limits are reached.
+-   **Genetic Algorithm (GA) Driven Optimization:** Integrates a Genetic Algorithm to intelligently explore the potential energy surface, generating and relaxing new structures based on the most promising candidates from previous iterations, significantly enhancing the search for stable phases.
 -   **AIMD-Check Mode:** (Planned) Run short MLIP-based molecular dynamics simulations to provide dynamic stability metrics.
 -   **Command-Line Interface (CLI):** Simple and intuitive CLI for high-throughput screening and integration into automated workflows.
 
@@ -74,7 +76,7 @@ vibroml --cif examples/another_material.cif --engine m3gnet --supercell_n 4 --de
 -   `*_phonon_run_summary.txt`: A comprehensive summary of the phonon run, including energy per atom, k-point path, space group, supercell size, and total atoms.
 
 #### 2. Auto-Screen Mode  
-This mode automates the search for stable phases. It performs a parameter sweep over supercell sizes, displacement deltas, and force tolerances to find the best settings that minimize negative imaginary phonons. If a soft mode persists after the sweep, it automatically triggers an iterative soft mode displacement and relaxation workflow.
+This mode automates the search for stable phases. It performs a parameter sweep over supercell sizes, displacement deltas, and force tolerances to find the best settings that minimize negative imaginary phonons. If a soft mode persists after the sweep, it automatically triggers an iterative soft mode displacement and relaxation workflow, now enhanced with a Genetic Algorithm.
 
 ```bash
 # Run auto-screen with MACE
@@ -91,6 +93,8 @@ In addition to the phonon-only mode outputs for each tested configuration, this 
     -   `*_d*.cif` and `*_d*.xyz`: Displaced supercell structures.
     -   `relaxation_summary.txt`: Summary of relaxation for all displaced structures in that folder.
     -   `soft_mode_iter_*_top_structure_*_phonon_analysis/`: Phonon analysis results for the top lowest-energy relaxed structures from that iteration, including their primitive cell CIFs.
+    -   `relaxation_summary_iter.txt`: A summary of relaxation results for the current GA iteration.
+-   `overall_relaxation_summary.txt`: A consolidated summary of relaxation results across all GA iterations, sorted by energy.
 
 #### 3. AIMD-Check Mode  
 NOT YET IMPLEMENTED. This feature will allow users to perform short MLIP-based AIMD simulations to assess the dynamic stability of structures at finite temperatures.
@@ -108,12 +112,8 @@ Use `vibroml --help` to see all available commands and options.
 # General help
 vibroml --help
 
-# Phonon-only mode help
-vibroml --cif --help
-
-# Auto-screen mode help
-vibroml --auto --help
 ```
+
 
 ### Package Structure  
 ```
@@ -124,6 +124,7 @@ vibroml/
 └── utils/
     ├── __init__.py
     ├── config.py           # Configuration constants (e.g., unit conversion factors)
+    ├── genetic_algorithm.py # Implements the Genetic Algorithm for structure exploration
     ├── phonon_utils.py     # Functions for phonon calculations, results processing, and soft mode analysis
     ├── plotting_utils.py   # Functions for generating phonon plots
     ├── relaxation_utils.py # Functions for structure relaxation and symmetry analysis

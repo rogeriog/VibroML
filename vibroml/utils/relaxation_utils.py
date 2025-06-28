@@ -265,7 +265,7 @@ def relax_structures_in_folder(folder_path: str, calculator: Calculator, engine:
                  # Add symmetry info to the summary_f for this specific structure  
                  summary_f.write("\n  --- Relaxed Structure Symmetry Analysis ---\n")  
                  if best_dataset_for_relaxed:  
-                     summary_f.write(f"  Symmetry Precision (Auto-tuned): {best_dataset_for_relaxed.get('symprec_found', 'N/A'):.4e}\n") # Assuming symprec_found is added to dataset  
+                     summary_f.write(f"  Symmetry Precision (Auto-tuned): {best_dataset_for_relaxed.get('symprec_found', 'N/A')}\n") # Assuming symprec_found is added to dataset  
                      summary_f.write(f"  Space Group Number: {best_dataset_for_relaxed['number']}\n")  
                      summary_f.write(f"  International Symbol: {best_dataset_for_relaxed['international']}\n")  
                      summary_f.write(f"  Hall Symbol: {best_dataset_for_relaxed['hall']}\n")  
