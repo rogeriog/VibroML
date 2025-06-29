@@ -1,7 +1,7 @@
 
 ### VibroML
 <div align="center">  
-  <img src="logo/VibroML2.png" alt="VibroML Logo" width="300px" height="150px">
+  <img src="logo/VibroML.png" alt="VibroML Logo" width="300px" height="150px">
 </div>
 
 
