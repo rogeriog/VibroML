@@ -1,7 +1,7 @@
 
 ### VibroML
 
-![VibroML Logo](logo/VibroML.png)
+![VibroML Logo](logo/VibroML.png){height=200px}
 
 [![PyPI Version](https://img.shields.io/pypi/v/vibroml.svg)](https://pypi.org/project/vibroml/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
