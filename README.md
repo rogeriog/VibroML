@@ -1,6 +1,8 @@
 
 ### VibroML
 
+![VibroML Logo](logo/VibroML.png)
+
 [![PyPI Version](https://img.shields.io/pypi/v/vibroml.svg)](https://pypi.org/project/vibroml/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ### Overview
@@ -11,7 +13,7 @@ VibroML is a powerful and user-friendly Python toolkit designed for efficient, M
 
 VibroML provides an end-to-end workflow to:
 
-*   **Compute Phonon Band Structures & Density of States (DOS):** Accurately predict vibrational properties.
+*   **Compute Phonon Band Structures & Density of States (DOS):** Extracting vibrational properties.
 *   **Screen for Imaginary (Negative) Modes:** Automatically detect dynamically unstable phonon modes.
 *   **Automated Soft Mode Displacement & Re-optimization:** Displace atoms along unstable eigenmodes and re-optimize the structure to find lower-energy, stable configurations.
 *   **Validate Dynamic Stability:** (Future) Utilize MLIP-powered Ab Initio Molecular Dynamics (AIMD) trajectories for robust stability assessment.
