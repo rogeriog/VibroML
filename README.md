@@ -161,12 +161,4 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for full 
 
 If you use VibroML in your work, please cite:
 
-```
-@software{vibroml2025,
-  author = {Rogerio A. Gouvea},
-  title  = {{VibroML}: Machine-Learned Vibrational Analysis & Stability Toolkit},
-  year   = {2025},
-  url    = {https://github.com/rogeriog/vibroml}
-}
-```
 
