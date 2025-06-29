@@ -1,7 +1,9 @@
 
 ### VibroML
+<div align="center">  
+  <img src="logo/VibroML2.png" alt="VibroML Logo" width="300px" height="150px">
+</div>
 
-![VibroML Logo](logo/VibroML.png){height=200px}
 
 [![PyPI Version](https://img.shields.io/pypi/v/vibroml.svg)](https://pypi.org/project/vibroml/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
