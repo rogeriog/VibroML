@@ -19,6 +19,6 @@ conda activate /auto/globalscratch/users/r/g/rgouvea/vibroml_env
 echo "start"
 date
 
-vibroml --cif Cs2KInI6.cif --auto
+vibroml --cif Cs2KInI6.cif --auto --soft_mode_num_top_structures_to_analyze 10
 echo "--- Calculation Done ---"
 date

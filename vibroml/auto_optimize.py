@@ -1,4 +1,3 @@
-# auto_optimize.py (Revised and Formatted)
 import os
 import sys
 import json
@@ -21,9 +20,6 @@ from pymatgen.io.ase import AseAtomsAdaptor
 from ase.io import read, write
 
 
-# analyze_and_resample function is removed as per plan.
-
-
 def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2):
     """
     Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
@@ -36,7 +32,7 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, de
         units (str): Units for frequencies (e.g., "THz", "cm-1").
         supercell_n (int): Supercell size (N,N,N).
         delta (float): Displacement delta for phonon calculation.
-        fmax (float): Maximum force for relaxation convergence.
+        fmax (float): Float: Maximum force for relaxation convergence.
         output_dir (str): Directory to save output files.
         prefix (str): Prefix for output filenames (default "phonon_run").
         phonon_path_npoints (int): Number of points along the phonon path (default 100).
@@ -414,7 +410,9 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
                     'params': individual_params,
                     'energy_per_atom': None, # Indicate failure
                     'relaxed_atoms': None,
-                    'original_file': None
+                    'original_file': None,
+                    'iteration': iteration_idx, # ADDED  
+                    'sample': i + 1 # ADDED
                 })
                 continue
 
@@ -424,7 +422,7 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
             # The generate_displaced_supercells function now creates a structure like:
             # base_output_dir/iteration_idx/supercell_NxNxN/filename.cif
             # So, the folder to relax is base_output_dir/iteration_idx/supercell_NxNxN
-            # Let's get the unique supercell folders from generated_cif_paths
+            # Let's get the unique supercell_folders from generated_cif_paths
             unique_supercell_folders = list(set(os.path.dirname(fpath) for fpath in generated_cif_paths))
 
             sample_relaxation_results = []
@@ -453,7 +451,9 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
                     'original_file': best_result_for_sample['original_file'],
                     'num_atoms': best_result_for_sample.get('num_atoms', 'N/A'),  
                     'international_symbol': best_result_for_sample.get('international_symbol', 'N/A'),  
-                    'crystal_system': best_result_for_sample.get('crystal_system', 'N/A')
+                    'crystal_system': best_result_for_sample.get('crystal_system', 'N/A'),
+                    'iteration': iteration_idx, # ADDED  
+                    'sample': i + 1 # ADDED
                 })
                 print(f"    Sample {i+1} relaxed. Lowest energy: {best_result_for_sample['energy_per_atom']:.6f} eV/atom")
             else:
@@ -462,7 +462,9 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
                     'params': individual_params,
                     'energy_per_atom': None, # Indicate failure
                     'relaxed_atoms': None,
-                    'original_file': None
+                    'original_file': None,
+                    'iteration': iteration_idx, # ADDED  
+                    'sample': i + 1 # ADDED
                 })
 
         # Add this iteration's results to the master list for GA evolution in next iteration
@@ -480,8 +482,9 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
         with open(iteration_summary_filepath, 'w') as f:    
             f.write(f"--- Relaxation Summary for Iteration {iteration_idx} ---\n")    
             f.write(f"Analysis Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")    
-            f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'GA Params':<50}\n")    
-            f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*50:<50}\n")    
+            # MODIFIED HEADER: Iter and Sample appear before GA Params
+            f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'Iter':<6} {'Sample':<8} {'GA Params':<50}\n")    
+            f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*6:<6} {'-'*8:<8} {'-'*50:<50}\n")    
     
             # Sort valid_iteration_results by energy_per_atom for this summary    
             sorted_iter_results = sorted(valid_iteration_results, key=lambda x: x['energy_per_atom'])    
@@ -492,10 +495,13 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
                 crystal_system = result.get('crystal_system', 'N/A')  
                 energy = result.get('energy_per_atom', 'FAIL')    
                 params = result.get('params', ('N/A', 'N/A', 'N/A'))    
-                params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:{params[2]}" if isinstance(params, tuple) else str(params)    
+                # Format cell_transformation_vector to 3 decimal places and duplicate space
+                cell_transform_str = ", ".join([f"{val:.3f}" for val in params[2]])
+                params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:({cell_transform_str}, {cell_transform_str})" if isinstance(params, tuple) else str(params)    
     
                 energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)    
-                f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {params_str:<50}\n")    
+                # MODIFIED LINE: Iter and Sample appear before GA Params
+                f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {str(result.get('iteration', 'N/A')):<6} {str(result.get('sample', 'N/A')):<8} {params_str:<50} \n")      
         print(f"Iteration {iteration_idx} relaxation summary saved to: {iteration_summary_filepath}")
         # NEW SNIPPET END
 
@@ -572,14 +578,39 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
         energy = result['energy_per_atom']
         # Also print the GA parameters for context
         params = result.get('params', ('N/A', 'N/A', 'N/A'))
-        print(f"  {idx}. {original_file} (Disp1: {params[0]:.3f}, Ratio21: {params[1]:.3f}, CellTrans: {params[2]}): {energy:.6f} eV/atom")
-
+        cell_transform_str = ", ".join([f"{val:.3f}" for val in params[2]])
+        print(f"  {idx}. Iter {result.get('iteration', 'N/A')}, Sample {result.get('sample', 'N/A')}: {original_file} (Disp1: {params[0]:.3f}, Ratio21: {params[1]:.3f}, Cell:({cell_transform_str}, {cell_transform_str})): {energy:.6f} eV/atom")
+        
 
     print(f"\nSelected the top {len(final_top_structures)} structures from all iterations for final analysis:")
     for i, result in enumerate(final_top_structures):
         original_file_base = os.path.splitext(os.path.basename(result['original_file']))[0]
         params = result.get('params', ('N/A', 'N/A', 'N/A'))
-        print(f"  {i+1}. {original_file_base} (Disp1: {params[0]:.3f}, Ratio21: {params[1]:.3f}, CellTrans: {params[2]}) (Energy: {result['energy_per_atom']:.6f} eV/atom)")
+        cell_transform_str = ", ".join([f"{val:.3f}" for val in params[2]])
+        print(f"  {i+1}. Iter {result.get('iteration', 'N/A')}, Sample {result.get('sample', 'N/A')}: {original_file_base} (Disp1: {params[0]:.3f}, Ratio21: {params[1]:.3f}, Cell:({cell_transform_str}, {cell_transform_str})) (Energy: {result['energy_per_atom']:.6f} eV/atom)")
+        
+        # --- NEW SNIPPET START: Save CIF and XYZ for top structures ---  
+        top_structure_relaxed_atoms = result['relaxed_atoms']  
+        final_top_structure_dir = os.path.join(base_output_dir, f"final_top_structures")  
+        os.makedirs(final_top_structure_dir, exist_ok=True)  
+  
+        # Construct a unique filename for the saved top structure  
+        # Include iteration and sample for clarity  
+        top_struct_filename_base = f"top_{i+1}_iter{result.get('iteration', 'N/A')}_sample{result.get('sample', 'N/A')}_{original_file_base}"  
+          
+        final_cif_path = os.path.join(final_top_structure_dir, f"{top_struct_filename_base}.cif")  
+        final_xyz_path = os.path.join(final_top_structure_dir, f"{top_struct_filename_base}.xyz")  
+  
+        try:  
+            write(final_cif_path, top_structure_relaxed_atoms)  
+            print(f"  Saved top structure CIF to: {final_cif_path}")  
+            write(final_xyz_path, top_structure_relaxed_atoms)  
+            print(f"  Saved top structure XYZ to: {final_xyz_path}")  
+        except Exception as e:  
+            print(f"  Error saving CIF/XYZ for top structure {i+1}: {e}")  
+            import traceback  
+            traceback.print_exc()
+
 
     for i, result in enumerate(final_top_structures):
         top_structure_relaxed_supercell = result['relaxed_atoms']
@@ -606,27 +637,31 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
     print("\n--- Soft Mode Iterative Optimization Complete ---")
     overall_summary_filepath = os.path.join(base_output_dir, "overall_relaxation_summary.txt")  
       
-    print("\n--- Creating Overall Relaxation Summary (All Iterations) ---")    
-    with open(overall_summary_filepath, 'w') as f:    
-        f.write(f"--- Overall Relaxation Summary (All Iterations) ---\n")    
-        f.write(f"Analysis Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")    
-        f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'GA Params':<50}\n")    
-        f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*50:<50}\n")    
-    
-        # Sort all_iterations_results by energy_per_atom for this summary    
-        sorted_overall_results = sorted(valid_overall_results, key=lambda x: x['energy_per_atom'])    
-    
-        for result in sorted_overall_results:    
-            num_atoms = result.get('num_atoms', 'N/A')  
-            international_symbol = result.get('international_symbol', 'N/A')  
-            crystal_system = result.get('crystal_system', 'N/A')  
-            energy = result.get('energy_per_atom', 'FAIL')    
-            params = result.get('params', ('N/A', 'N/A', 'N/A'))    
-            params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:{params[2]}" if isinstance(params, tuple) else str(params)    
-    
-            energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)    
-            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {params_str:<50}\n")    
-    print(f"Overall relaxation summary saved to: {overall_summary_filepath}")    
+    print("\n--- Creating Overall Relaxation Summary (All Iterations) ---")      
+    with open(overall_summary_filepath, 'w') as f:      
+        f.write(f"--- Overall Relaxation Summary (All Iterations) ---\n")      
+        f.write(f"Analysis Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")      
+        # MODIFIED HEADER: Iter and Sample appear before GA Params
+        f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'Iter':<6} {'Sample':<8} {'GA Params':<50}\n")      
+        f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*6:<6} {'-'*8:<8} {'-'*50:<50} \n")      
+      
+        # Sort all_iterations_results by energy_per_atom for this summary      
+        sorted_overall_results = sorted(valid_overall_results, key=lambda x: x['energy_per_atom'])      
+      
+        for result in sorted_overall_results:      
+            num_atoms = result.get('num_atoms', 'N/A')    
+            international_symbol = result.get('international_symbol', 'N/A')    
+            crystal_system = result.get('crystal_system', 'N/A')    
+            energy = result.get('energy_per_atom', 'FAIL')      
+            params = result.get('params', ('N/A', 'N/A', 'N/A'))      
+            # Format cell_transformation_vector to 3 decimal places and duplicate space
+            cell_transform_str = ", ".join([f"{val:.3f}" for val in params[2]])
+            params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:({cell_transform_str}, {cell_transform_str})" if isinstance(params, tuple) else str(params)      
+      
+            energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)      
+            # MODIFIED LINE: Iter and Sample appear before GA Params
+            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {str(result.get('iteration', 'N/A')):<6} {str(result.get('sample', 'N/A')):<8} {params_str:<50}\n")      
+    print(f"Overall relaxation summary saved to: {overall_summary_filepath}")  
     
     # Print the overall summary to screen    
     with open(overall_summary_filepath, 'r') as f:    

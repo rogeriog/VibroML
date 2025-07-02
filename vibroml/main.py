@@ -15,6 +15,8 @@ from .utils.relaxation_utils import relax_structure
 
 def main():
     # --- Step 0.0: Load Default Settings ---
+    # These will serve as the *default* values for the argparse arguments.
+    # If the JSON file is not found or values are missing, hardcoded fallbacks are used.
     print("--- Step 0.0: Loading Default Settings ---")
     default_settings = load_default_settings()
     if not default_settings:
@@ -38,10 +40,9 @@ def main():
         soft_mode_num_top_structures_to_analyze = 3
         cell_scale_factors = [-0.05, 0.0, 0.05, 0.10]
         num_modes_to_return = 2
-        # NEW GA FALLBACKS
         ga_population_size = 50
         ga_mutation_rate = 0.1
-        num_new_points_per_iteration = 30 # This was previously num_new_points in analyze_and_resample
+        num_new_points_per_iteration = 30
     else:
         # Use values from loaded JSON
         default_engine = default_settings.get("default_engine", "mace")
@@ -62,7 +63,6 @@ def main():
         soft_mode_num_top_structures_to_analyze = default_settings.get("soft_mode_num_top_structures_to_analyze", 3)
         cell_scale_factors = default_settings.get("cell_scale_factors", [-0.05, 0.0, 0.05, 0.10])
         num_modes_to_return = default_settings.get("num_modes_to_return", 2)
-        # NEW GA LOAD
         ga_population_size = default_settings.get("ga_population_size", 50)
         ga_mutation_rate = default_settings.get("ga_mutation_rate", 0.1)
         num_new_points_per_iteration = default_settings.get("num_new_points_per_iteration", 30)
@@ -87,7 +87,32 @@ def main():
     parser.add_argument("--auto", action="store_true", help="Automatically test multiple settings (parameter sweep) to minimize negative imaginary phonons. If a soft mode persists, it will trigger the iterative soft mode workflow.")
     parser.add_argument("--run-soft-mode-after-single", action="store_true", help="If a soft mode is detected in a single phonon calculation, automatically run the iterative soft mode displacement and relaxation workflow.")
     parser.add_argument("--displace-primitive", action="store_true", help="Also perform soft mode displacements and relaxation directly on the primitive cell, in a separate directory.")
-    # NEW GA ARGS
+
+    # --- New Arguments for Parameter Sweep and Soft Mode Optimization ---
+    parser.add_argument("--screen_supercell_ns", type=int, nargs='+', default=screen_supercell_ns,
+                        help=f"List of supercell N values for parameter sweep (default: {screen_supercell_ns}).")
+    parser.add_argument("--screen_deltas", type=float, nargs='+', default=screen_deltas,
+                        help=f"List of delta values for parameter sweep (default: {screen_deltas}).")
+    parser.add_argument("--screen_fmax_values", type=float, nargs='+', default=screen_fmax_values,
+                        help=f"List of fmax values for parameter sweep (default: {screen_fmax_values}).")
+    parser.add_argument("--phonon_path_npoints", type=int, default=phonon_path_npoints,
+                        help=f"Number of points along the phonon path (default: {phonon_path_npoints}).")
+    parser.add_argument("--phonon_dos_grid", type=int, nargs=3, default=phonon_dos_grid,
+                        help=f"Grid for DOS calculation (e.g., 40 40 40) (default: {phonon_dos_grid}).")
+    parser.add_argument("--traj_kT", type=float, default=default_traj_kT,
+                        help=f"Temperature for trajectory generation (default: {default_traj_kT} eV).")
+    parser.add_argument("--negative_phonon_threshold_thz", type=float, default=negative_phonon_threshold_thz,
+                        help=f"Threshold for negative phonon frequency in THz to trigger soft mode optimization (default: {negative_phonon_threshold_thz} THz).")
+    parser.add_argument("--soft_mode_max_iterations", type=int, default=soft_mode_max_iterations,
+                        help=f"Maximum iterations for the soft mode optimization (default: {soft_mode_max_iterations}).")
+    parser.add_argument("--soft_mode_displacement_scales", type=float, nargs='+', default=soft_mode_displacement_scales,
+                        help=f"List of displacement scales for soft mode generation (default: {soft_mode_displacement_scales}).")
+    parser.add_argument("--soft_mode_num_top_structures_to_analyze", type=int, default=soft_mode_num_top_structures_to_analyze,
+                        help=f"Number of top structures to analyze in final soft mode optimization step (default: {soft_mode_num_top_structures_to_analyze}).")
+    parser.add_argument("--cell_scale_factors", type=float, nargs='+', default=cell_scale_factors,
+                        help=f"List of cell scale factors for soft mode optimization (default: {cell_scale_factors}).")
+    parser.add_argument("--num_modes_to_return", type=int, default=num_modes_to_return,
+                        help=f"Number of softest modes to return for analysis (default: {num_modes_to_return}).")
     parser.add_argument("--ga_population_size", type=int, default=ga_population_size,
                         help=f"Population size for the Genetic Algorithm (default: {ga_population_size}).")
     parser.add_argument("--ga_mutation_rate", type=float, default=ga_mutation_rate,
@@ -122,25 +147,25 @@ def main():
     # --- Step 0.3: Run Calculation based on Mode ---
     if args.auto:
         print("\n--- Step 0.3: Running in Parameter Sweep Auto Optimization Mode ---")
-        # Pass default settings to the sweep function
+        # Pass args directly, as all parameters are now attributes of args
         run_parameter_sweep_optimization(
             args,
             output_dir,
-            screen_supercell_ns,
-            screen_deltas,
-            screen_fmax_values,
-            negative_phonon_threshold_thz,
-            soft_mode_max_iterations,
-            soft_mode_displacement_scales,
-            soft_mode_num_top_structures_to_analyze,
-            phonon_path_npoints,
-            phonon_dos_grid,
-            default_traj_kT,
-            cell_scale_factors,
-            num_modes_to_return,
-            ga_population_size,
-            ga_mutation_rate,
-            num_new_points_per_iteration,
+            args.screen_supercell_ns, # Now from args
+            args.screen_deltas,       # Now from args
+            args.screen_fmax_values,  # Now from args
+            args.negative_phonon_threshold_thz, # Now from args
+            args.soft_mode_max_iterations,      # Now from args
+            args.soft_mode_displacement_scales, # Now from args
+            args.soft_mode_num_top_structures_to_analyze, # Now from args
+            args.phonon_path_npoints, # Now from args
+            args.phonon_dos_grid,     # Now from args
+            args.traj_kT,             # Now from args
+            args.cell_scale_factors,  # Now from args
+            args.num_modes_to_return, # Now from args
+            args.ga_population_size,  # Now from args
+            args.ga_mutation_rate,    # Now from args
+            args.num_new_points_per_iteration, # Now from args
         )
     else:
         print("\n--- Step 0.3: Running Single Calculation Mode ---")
@@ -178,16 +203,16 @@ def main():
         print("Run settings saved.")
 
         # Execute the single phonon analysis step
-        softest_modes_info, most_negative_freq, time_taken = run_single_phonon_analysis( # Changed to softest_modes_info (list)
+        softest_modes_info, most_negative_freq, time_taken = run_single_phonon_analysis(
             current_atoms, calculator, args.engine, args.units, args.supercell_n, args.delta, args.fmax, current_run_output_dir, prefix=cif_filename_base,
-            phonon_path_npoints=phonon_path_npoints,
-            phonon_dos_grid=phonon_dos_grid,
-            traj_kT=default_traj_kT,
-            num_modes_to_return=num_modes_to_return,
+            phonon_path_npoints=args.phonon_path_npoints, # Now from args
+            phonon_dos_grid=args.phonon_dos_grid,     # Now from args
+            traj_kT=args.traj_kT,                     # Now from args
+            num_modes_to_return=args.num_modes_to_return, # Now from args
         )
 
         # If --run-soft-mode-after-single is enabled and a soft mode is detected
-        threshold_in_current_units = negative_phonon_threshold_thz
+        threshold_in_current_units = args.negative_phonon_threshold_thz # Now from args
         if args.units == "cm-1":
             threshold_in_current_units *= 33.35641
         elif args.units == "eV":
@@ -201,15 +226,18 @@ def main():
                 output_dir,
                 current_atoms, # The structure that had the soft mode
                 softest_modes_info, # The softest mode info list from that structure
-                max_iterations=soft_mode_max_iterations,
-                soft_mode_displacement_scales=soft_mode_displacement_scales,
-                num_top_structures_to_analyze=soft_mode_num_top_structures_to_analyze,
-                negative_phonon_threshold_thz=negative_phonon_threshold_thz,
-                phonon_path_npoints=phonon_path_npoints,
-                phonon_dos_grid=phonon_dos_grid,
-                default_traj_kT=default_traj_kT,
-                cell_scale_factors=cell_scale_factors,
-                num_modes_to_return=num_modes_to_return
+                max_iterations=args.soft_mode_max_iterations, # Now from args
+                soft_mode_displacement_scales=args.soft_mode_displacement_scales, # Now from args
+                num_top_structures_to_analyze=args.soft_mode_num_top_structures_to_analyze, # Now from args
+                negative_phonon_threshold_thz=args.negative_phonon_threshold_thz, # Now from args
+                phonon_path_npoints=args.phonon_path_npoints, # Now from args
+                phonon_dos_grid=args.phonon_dos_grid,     # Now from args
+                default_traj_kT=args.traj_kT,             # Now from args
+                cell_scale_factors=args.cell_scale_factors, # Now from args
+                num_modes_to_return=args.num_modes_to_return, # Now from args
+                ga_population_size=args.ga_population_size, # Now from args
+                ga_mutation_rate=args.ga_mutation_rate,   # Now from args
+                num_new_points_per_iteration=args.num_new_points_per_iteration, # Now from args
             )
         elif args.run_soft_mode_after_single:
             print(f"\nNo significant soft mode detected ({most_negative_freq:.4f} {args.units}) in single run. Skipping iterative soft mode optimization.")
@@ -225,15 +253,18 @@ def main():
                 primitive_output_dir, # New output directory for primitive cell
                 current_atoms, # The primitive cell structure (already primitive if from run_single_phonon_analysis)
                 softest_modes_info, # The softest mode info list from that structure
-                max_iterations=soft_mode_max_iterations,
-                soft_mode_displacement_scales=soft_mode_displacement_scales,
-                num_top_structures_to_analyze=soft_mode_num_top_structures_to_analyze,
-                negative_phonon_threshold_thz=negative_phonon_threshold_thz,
-                phonon_path_npoints=phonon_path_npoints,
-                phonon_dos_grid=phonon_dos_grid,
-                default_traj_kT=default_traj_kT,
-                cell_scale_factors=cell_scale_factors,
-                num_modes_to_return=num_modes_to_return
+                max_iterations=args.soft_mode_max_iterations, # Now from args
+                soft_mode_displacement_scales=args.soft_mode_displacement_scales, # Now from args
+                num_top_structures_to_analyze=args.soft_mode_num_top_structures_to_analyze, # Now from args
+                negative_phonon_threshold_thz=args.negative_phonon_threshold_thz, # Now from args
+                phonon_path_npoints=args.phonon_path_npoints, # Now from args
+                phonon_dos_grid=args.phonon_dos_grid,     # Now from args
+                default_traj_kT=args.traj_kT,             # Now from args
+                cell_scale_factors=args.cell_scale_factors, # Now from args
+                num_modes_to_return=args.num_modes_to_return, # Now from args
+                ga_population_size=args.ga_population_size, # Now from args
+                ga_mutation_rate=args.ga_mutation_rate,   # Now from args
+                num_new_points_per_iteration=args.num_new_points_per_iteration, # Now from args
             )
         elif args.displace_primitive:
             print(f"\nNo significant soft mode detected ({most_negative_freq:.4f} {args.units}) in single run. Skipping primitive cell iterative soft mode optimization.")
