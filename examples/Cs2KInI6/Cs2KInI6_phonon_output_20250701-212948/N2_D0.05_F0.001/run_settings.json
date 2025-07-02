@@ -1,0 +1,56 @@
+{
+    "cif": "Cs2KInI6.cif",
+    "no_relax": false,
+    "engine": "mace",
+    "units": "THz",
+    "model_name": "medium-omat-0",
+    "supercell_n": 2,
+    "delta": 0.05,
+    "fmax": 0.001,
+    "auto": true,
+    "run_soft_mode_after_single": false,
+    "displace_primitive": false,
+    "screen_supercell_ns": [
+        2,
+        3,
+        4
+    ],
+    "screen_deltas": [
+        0.05,
+        0.03,
+        0.01
+    ],
+    "screen_fmax_values": [
+        0.001,
+        0.0005,
+        0.0001
+    ],
+    "phonon_path_npoints": 100,
+    "phonon_dos_grid": [
+        40,
+        40,
+        40
+    ],
+    "traj_kT": 1.0,
+    "negative_phonon_threshold_thz": -0.1,
+    "soft_mode_max_iterations": 3,
+    "soft_mode_displacement_scales": [
+        10.0,
+        17.783,
+        31.623,
+        56.234,
+        100.0
+    ],
+    "soft_mode_num_top_structures_to_analyze": 10,
+    "cell_scale_factors": [
+        -0.1,
+        -0.05,
+        0.0,
+        0.05,
+        0.1
+    ],
+    "num_modes_to_return": 2,
+    "ga_population_size": 50,
+    "ga_mutation_rate": 0.2,
+    "num_new_points_per_iteration": 30
+}

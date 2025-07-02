@@ -1,0 +1,17 @@
+--- Relaxation Summary for Folder: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/Cs2KInI6/Cs2KInI6_phonon_output_20250701-212948/iter_1/sample_45/iteration_1/supercell_2x2x2 ---
+Analysis Date: 2025-07-01 23:10:46
+
+### Structure: Cs2KInI6_d1_49.577_r21_0.155_c_m103_p036_p090_p7202_m1132_p7993.cif ###
+Original File: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/Cs2KInI6/Cs2KInI6_phonon_output_20250701-212948/iter_1/sample_45/iteration_1/supercell_2x2x2/Cs2KInI6_d1_49.577_r21_0.155_c_m103_p036_p090_p7202_m1132_p7993.cif
+Total Number of Atoms: 80
+Relaxation Status: FAIL (did not converge)
+Final Energy: FAIL
+Final Energy per Atom: FAIL
+Relaxed File: N/A
+Relaxed XYZ File: N/A
+Unconverged File: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/Cs2KInI6/Cs2KInI6_phonon_output_20250701-212948/iter_1/sample_45/iteration_1/supercell_2x2x2/Cs2KInI6_d1_49.577_r21_0.155_c_m103_p036_p090_p7202_m1132_p7993_unconverged.cif
+
+  --- Relaxed Structure Symmetry Analysis ---
+  Skipped due to relaxation failure.
+  -------------------------------------------
+

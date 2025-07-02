@@ -1,27 +1,38 @@
 --- FILE: README.md ---
+
 ### VibroML
+<div align="center">  
+  <img src="logo/VibroML.png" alt="VibroML Logo" width="300px" height="150px">
+</div>
+AI-Powered Vibrational Analysis & Stability Suite
 
 [![PyPI Version](https://img.shields.io/pypi/v/vibroml.svg)](https://pypi.org/project/vibroml/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-### Overview  
-VibroML is a powerful and user-friendly Python toolkit designed for efficient, Machine-Learned Interatomic Potential (MLIP)-driven vibrational analysis of crystalline materials. It streamlines the process of identifying and stabilizing dynamically unstable phases, making it an invaluable tool for materials discovery and design.
+### Overview
 
-Leveraging state-of-the-art MLIPs like MACE and M3GNet, VibroML can:  
-1.  **Compute Phonon Band Structures & Density of States (DOS):** Accurately predict vibrational properties.
-2.  **Screen for Imaginary (Negative) Modes:** Automatically detect dynamically unstable phonon modes.
-3.  **Automated Soft Mode Displacement & Re-optimization:** Displace atoms along unstable eigenmodes and re-optimize the structure to find lower-energy, stable configurations.
-4.  **Validate Dynamic Stability:** (Future) Utilize MLIP-powered Ab Initio Molecular Dynamics (AIMD) trajectories for robust stability assessment.
+VibroML is a powerful and user-friendly Python toolkit designed for efficient, Machine-Learned Interatomic Potential (MLIP)-driven vibrational analysis of crystalline materials. It streamlines the process of identifying and stabilizing dynamically unstable phases, making it an invaluable tool for materials discovery and design. By leveraging state-of-the-art MLIPs like MACE, VibroML significantly reduces manual intervention, accelerating the discovery of novel, dynamically stable material phases.
 
-This end-to-end workflow significantly reduces manual intervention, accelerating the discovery of novel, dynamically stable material phases.
+### Key Capabilities
 
-### Features  
--   **Phonon-Only Mode:** Quickly compute phonon band structures and DOS, with detailed reporting of imaginary modes. Ideal for initial stability checks.
--   **Auto-Screen Mode:** An intelligent, automated pipeline to detect unstable modes, displace atoms along them, re-optimize the structure, and iteratively stabilize it. This mode includes a parameter sweep to find optimal calculation settings.
--   **Soft-Mode Iterative Optimization:** A dedicated workflow to systematically explore stable configurations by displacing along soft modes and relaxing, iterating until stability is achieved or limits are reached.
--   **AIMD-Check Mode:** (Planned) Run short MLIP-based molecular dynamics simulations to provide dynamic stability metrics.
--   **Command-Line Interface (CLI):** Simple and intuitive CLI for high-throughput screening and integration into automated workflows.
+VibroML provides an end-to-end workflow to:
 
-### Installation  
+*   **Compute Phonon Band Structures & Density of States (DOS):** Extracting vibrational properties.
+*   **Screen for Imaginary (Negative) Modes:** Automatically detect dynamically unstable phonon modes.
+*   **Automated Soft Mode Displacement & Re-optimization:** Displace atoms along unstable eigenmodes and re-optimize the structure to find lower-energy, stable configurations.
+*   **Validate Dynamic Stability:** (Future) Utilize MLIP-powered Ab Initio Molecular Dynamics (AIMD) trajectories for robust stability assessment.
+
+### Modes of Operation
+
+VibroML offers several specialized modes to suit different analysis needs:
+
+*   **Phonon-Only Mode:** Quickly compute phonon band structures and DOS, with detailed reporting of imaginary modes. Ideal for initial stability checks.
+*   **Auto-Screen Mode:** An intelligent, automated pipeline to detect unstable modes, displace atoms along them, re-optimize the structure, and iteratively stabilize it. This mode includes a parameter sweep to find optimal calculation settings and is now enhanced with a Genetic Algorithm for exploring stable configurations.
+*   **Soft-Mode Iterative Optimization:** A dedicated workflow to systematically explore stable configurations by displacing along soft modes and relaxing, iterating until stability is achieved or limits are reached.
+*   **Genetic Algorithm (GA) Driven Optimization:** Integrates a Genetic Algorithm to intelligently explore the potential energy surface, generating and relaxing new structures based on the most promising candidates from previous iterations, significantly enhancing the search for stable phases.
+*   **AIMD-Check Mode:** (Planned) Run short MLIP-based molecular dynamics simulations to provide dynamic stability metrics.
+*   **Command-Line Interface (CLI):** Simple and intuitive CLI for high-throughput screening and integration into automated workflows.
+
+### Installation
 
 VibroML can be installed via `pip` or from source.
 
@@ -36,22 +47,23 @@ pip install -e .
 ```
 
 **Prerequisites:**
--   Python 3.9+
--   For MACE engine: `pip install mace-torch`
--   For M3GNet engine: `pip install m3gnet` (usually installed with `vibroml` dependencies)
--   Other scientific libraries (ASE, NumPy, Matplotlib, Pymatgen, Spglib) are handled by `pip install vibroml`.
 
-### Quickstart  
+*   Python 3.9+
+*   For MACE engine: `pip install mace-torch`
+*   Other scientific libraries (ASE, NumPy, Matplotlib, Pymatgen, Spglib) are handled by `pip install vibroml`.
+
+### Quickstart
 
 #### Basic Usage
 
 To run a phonon calculation, you need a CIF file and specify the calculation engine.
 
 ```bash
-vibroml --cif path/to/your_structure.cif --engine mace
+vibroml --cif your_structure.cif --engine mace
 ```
 
-#### 1. Phonon-Only Mode  
+#### 1. Phonon-Only Mode
+
 This mode performs a single phonon calculation on your structure. It will relax the structure by default, then compute the phonon band structure and DOS, and report any imaginary modes.
 
 ```bash
@@ -61,21 +73,24 @@ vibroml --cif examples/your_material.cif --engine mace --no-relax
 # Run with M3GNet, using a 4x4x4 supercell and custom displacement
 vibroml --cif examples/another_material.cif --engine m3gnet --supercell_n 4 --delta 0.02 --units cm-1
 ```
-**Output:**
--   `phonon_bs_dos_*.png` and `*.svg`: Plots of the phonon band structure and DOS.
--   `band_structure_energies_*.txt`, `dos_energies_*.txt`, `k_point_distances_*.txt`, `special_k_points_*.txt`: Raw data files.
--   `special_point_analysis.json`: Detailed analysis of frequencies at high-symmetry k-points.
--   `softest_mode_displacements.txt`: Text file detailing the displacements for the most negative phonon mode.
--   `softest_mode_*.traj` and `softest_mode_*.xyz`: ASE trajectory and XYZ files visualizing the softest mode.
--   `initial_settings.json`: Records the command-line arguments used for the run.
--   `relax.traj` and `relax.xyz`: Trajectory of the relaxation process (if not `--no-relax`).
--   `*_relaxed_*.cif`: The relaxed structure CIF file.
--   `initial_symmetry_analysis.txt` and `relaxed_symmetry_analysis.txt`: Symmetry information for initial and relaxed structures.
--   `energy_info.txt`: Summary of energy changes during relaxation.
--   `*_phonon_run_summary.txt`: A comprehensive summary of the phonon run, including energy per atom, k-point path, space group, supercell size, and total atoms.
 
-#### 2. Auto-Screen Mode  
-This mode automates the search for stable phases. It performs a parameter sweep over supercell sizes, displacement deltas, and force tolerances to find the best settings that minimize negative imaginary phonons. If a soft mode persists after the sweep, it automatically triggers an iterative soft mode displacement and relaxation workflow.
+**Output:**
+
+*   `phonon_bs_dos_*.png` and `*.svg`: Plots of the phonon band structure and DOS.
+*   `band_structure_energies_*.txt`, `dos_energies_*.txt`, `k_point_distances_*.txt`, `special_k_points_*.txt`: Raw data files.
+*   `special_point_analysis.json`: Detailed analysis of frequencies at high-symmetry k-points.
+*   `softest_mode_displacements.txt`: Text file detailing the displacements for the most negative phonon mode.
+*   `softest_mode_*.traj` and `softest_mode_*.xyz`: ASE trajectory and XYZ files visualizing the softest mode.
+*   `initial_settings.json`: Records the command-line arguments used for the run.
+*   `relax.traj` and `relax.xyz`: Trajectory of the relaxation process (if not `--no-relax`).
+*   `*_relaxed_*.cif`: The relaxed structure CIF file.
+*   `initial_symmetry_analysis.txt` and `relaxed_symmetry_analysis.txt`: Symmetry information for initial and relaxed structures.
+*   `energy_info.txt`: Summary of energy changes during relaxation.
+*   `*_phonon_run_summary.txt`: A comprehensive summary of the phonon run, including energy per atom, k-point path, space group, supercell size, and total atoms.
+
+#### 2. Auto-Screen Mode
+
+This mode automates the search for stable phases. It performs a parameter sweep over supercell sizes, displacement deltas, and force tolerances to find the best settings that minimize negative imaginary phonons. If a soft mode persists after the sweep, it automatically triggers an iterative soft mode displacement and relaxation workflow, now enhanced with a Genetic Algorithm.
 
 ```bash
 # Run auto-screen with MACE
@@ -84,16 +99,22 @@ vibroml --cif examples/unstable_material.cif --engine mace --auto
 # Run auto-screen with M3GNet, allowing initial relaxation
 vibroml --cif examples/another_unstable.cif --engine m3gnet --auto --fmax 0.0005
 ```
-**Output:**
-In addition to the phonon-only mode outputs for each tested configuration, this mode will generate:
--   `auto_results.json`: A summary of the parameter sweep results.
--   `soft_mode_iter_*/` directories: Each iteration of the soft mode optimization will have its own folder containing:
-    -   `supercell_*/`: Subdirectories for each generated supercell variant.
-    -   `*_d*.cif` and `*_d*.xyz`: Displaced supercell structures.
-    -   `relaxation_summary.txt`: Summary of relaxation for all displaced structures in that folder.
-    -   `soft_mode_iter_*_top_structure_*_phonon_analysis/`: Phonon analysis results for the top lowest-energy relaxed structures from that iteration, including their primitive cell CIFs.
 
-#### 3. AIMD-Check Mode  
+**Output:**
+
+In addition to the phonon-only mode outputs for each tested configuration, this mode will generate:
+
+*   `auto_results.json`: A summary of the parameter sweep results.
+*   `soft_mode_iter_*/` directories: Each iteration of the soft mode optimization will have its own folder containing:
+    *   `supercell_*/`: Subdirectories for each generated supercell variant.
+    *   `*_d*.cif` and `*_d*.xyz`: Displaced supercell structures.
+    *   `relaxation_summary.txt`: Summary of relaxation for all displaced structures in that folder.
+    *   `soft_mode_iter_*_top_structure_*_phonon_analysis/`: Phonon analysis results for the top lowest-energy relaxed structures from that iteration, including their primitive cell CIFs.
+    *   `relaxation_summary_iter.txt`: A summary of relaxation results for the current GA iteration.
+*   `overall_relaxation_summary.txt`: A consolidated summary of relaxation results across all GA iterations, sorted by energy.
+
+#### 3. AIMD-Check Mode
+
 NOT YET IMPLEMENTED. This feature will allow users to perform short MLIP-based AIMD simulations to assess the dynamic stability of structures at finite temperatures.
 
 ```python
@@ -101,7 +122,7 @@ NOT YET IMPLEMENTED. This feature will allow users to perform short MLIP-based A
 # vibroml --cif stable_candidate.cif --engine mace --aimd --temperature 300 --steps 1000
 ```
 
-### Command-Line Interface  
+### Command-Line Interface
 
 Use `vibroml --help` to see all available commands and options.
 
@@ -109,14 +130,10 @@ Use `vibroml --help` to see all available commands and options.
 # General help
 vibroml --help
 
-# Phonon-only mode help
-vibroml --cif --help
-
-# Auto-screen mode help
-vibroml --auto --help
 ```
 
-### Package Structure  
+### Package Structure
+
 ```
 vibroml/
 ├── __init__.py
@@ -125,6 +142,7 @@ vibroml/
 └── utils/
     ├── __init__.py
     ├── config.py           # Configuration constants (e.g., unit conversion factors)
+    ├── genetic_algorithm.py # Implements the Genetic Algorithm for structure exploration
     ├── phonon_utils.py     # Functions for phonon calculations, results processing, and soft mode analysis
     ├── plotting_utils.py   # Functions for generating phonon plots
     ├── relaxation_utils.py # Functions for structure relaxation and symmetry analysis
@@ -132,22 +150,18 @@ vibroml/
     └── utils.py            # General utility functions (e.g., cache cleaning, MACE device detection)
 ```
 
-### Contributing  
-We welcome contributions to VibroML! Please follow these steps:  
-1.  **Fork the repository:** Create your own fork on GitHub.  
-2.  **Create a feature branch:** `git checkout -b feature/your-feature-name`  
-3.  **Implement your changes:** Write clear, concise code.  
-4.  **Write tests:** Ensure your new features are covered by tests and existing tests pass.  
-5.  **Update documentation:** If your changes affect functionality, update the README or other relevant documentation.  
-6.  **Submit a pull request:** Provide a clear and detailed description of your changes.  
+### Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) (if you create one) for more detailed guidelines.
+We welcome contributions to VibroML! Please fork the repository, make your changes, and submit a pull request with a clear description of your modifications.
 
-### License  
+### License
+
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for full text.
 
-### Citation  
-If you use VibroML in your work, please cite:  
+### Citation
+
+If you use VibroML in your work, please cite:
+
 ```
 @software{vibroml2025,
   author = {Rogerio A. Gouvea},
@@ -156,6 +170,7 @@ If you use VibroML in your work, please cite:
   url    = {https://github.com/rogeriog/vibroml}
 }
 ```
+
 
 --- END FILE: {file_path} ---
 
@@ -433,6 +448,8 @@ from .utils.relaxation_utils import relax_structure
 
 def main():
     # --- Step 0.0: Load Default Settings ---
+    # These will serve as the *default* values for the argparse arguments.
+    # If the JSON file is not found or values are missing, hardcoded fallbacks are used.
     print("--- Step 0.0: Loading Default Settings ---")
     default_settings = load_default_settings()
     if not default_settings:
@@ -456,10 +473,9 @@ def main():
         soft_mode_num_top_structures_to_analyze = 3
         cell_scale_factors = [-0.05, 0.0, 0.05, 0.10]
         num_modes_to_return = 2
-        # NEW GA FALLBACKS
         ga_population_size = 50
         ga_mutation_rate = 0.1
-        num_new_points_per_iteration = 30 # This was previously num_new_points in analyze_and_resample
+        num_new_points_per_iteration = 30
     else:
         # Use values from loaded JSON
         default_engine = default_settings.get("default_engine", "mace")
@@ -480,7 +496,6 @@ def main():
         soft_mode_num_top_structures_to_analyze = default_settings.get("soft_mode_num_top_structures_to_analyze", 3)
         cell_scale_factors = default_settings.get("cell_scale_factors", [-0.05, 0.0, 0.05, 0.10])
         num_modes_to_return = default_settings.get("num_modes_to_return", 2)
-        # NEW GA LOAD
         ga_population_size = default_settings.get("ga_population_size", 50)
         ga_mutation_rate = default_settings.get("ga_mutation_rate", 0.1)
         num_new_points_per_iteration = default_settings.get("num_new_points_per_iteration", 30)
@@ -505,7 +520,32 @@ def main():
     parser.add_argument("--auto", action="store_true", help="Automatically test multiple settings (parameter sweep) to minimize negative imaginary phonons. If a soft mode persists, it will trigger the iterative soft mode workflow.")
     parser.add_argument("--run-soft-mode-after-single", action="store_true", help="If a soft mode is detected in a single phonon calculation, automatically run the iterative soft mode displacement and relaxation workflow.")
     parser.add_argument("--displace-primitive", action="store_true", help="Also perform soft mode displacements and relaxation directly on the primitive cell, in a separate directory.")
-    # NEW GA ARGS
+
+    # --- New Arguments for Parameter Sweep and Soft Mode Optimization ---
+    parser.add_argument("--screen_supercell_ns", type=int, nargs='+', default=screen_supercell_ns,
+                        help=f"List of supercell N values for parameter sweep (default: {screen_supercell_ns}).")
+    parser.add_argument("--screen_deltas", type=float, nargs='+', default=screen_deltas,
+                        help=f"List of delta values for parameter sweep (default: {screen_deltas}).")
+    parser.add_argument("--screen_fmax_values", type=float, nargs='+', default=screen_fmax_values,
+                        help=f"List of fmax values for parameter sweep (default: {screen_fmax_values}).")
+    parser.add_argument("--phonon_path_npoints", type=int, default=phonon_path_npoints,
+                        help=f"Number of points along the phonon path (default: {phonon_path_npoints}).")
+    parser.add_argument("--phonon_dos_grid", type=int, nargs=3, default=phonon_dos_grid,
+                        help=f"Grid for DOS calculation (e.g., 40 40 40) (default: {phonon_dos_grid}).")
+    parser.add_argument("--traj_kT", type=float, default=default_traj_kT,
+                        help=f"Temperature for trajectory generation (default: {default_traj_kT} eV).")
+    parser.add_argument("--negative_phonon_threshold_thz", type=float, default=negative_phonon_threshold_thz,
+                        help=f"Threshold for negative phonon frequency in THz to trigger soft mode optimization (default: {negative_phonon_threshold_thz} THz).")
+    parser.add_argument("--soft_mode_max_iterations", type=int, default=soft_mode_max_iterations,
+                        help=f"Maximum iterations for the soft mode optimization (default: {soft_mode_max_iterations}).")
+    parser.add_argument("--soft_mode_displacement_scales", type=float, nargs='+', default=soft_mode_displacement_scales,
+                        help=f"List of displacement scales for soft mode generation (default: {soft_mode_displacement_scales}).")
+    parser.add_argument("--soft_mode_num_top_structures_to_analyze", type=int, default=soft_mode_num_top_structures_to_analyze,
+                        help=f"Number of top structures to analyze in final soft mode optimization step (default: {soft_mode_num_top_structures_to_analyze}).")
+    parser.add_argument("--cell_scale_factors", type=float, nargs='+', default=cell_scale_factors,
+                        help=f"List of cell scale factors for soft mode optimization (default: {cell_scale_factors}).")
+    parser.add_argument("--num_modes_to_return", type=int, default=num_modes_to_return,
+                        help=f"Number of softest modes to return for analysis (default: {num_modes_to_return}).")
     parser.add_argument("--ga_population_size", type=int, default=ga_population_size,
                         help=f"Population size for the Genetic Algorithm (default: {ga_population_size}).")
     parser.add_argument("--ga_mutation_rate", type=float, default=ga_mutation_rate,
@@ -540,25 +580,25 @@ def main():
     # --- Step 0.3: Run Calculation based on Mode ---
     if args.auto:
         print("\n--- Step 0.3: Running in Parameter Sweep Auto Optimization Mode ---")
-        # Pass default settings to the sweep function
+        # Pass args directly, as all parameters are now attributes of args
         run_parameter_sweep_optimization(
             args,
             output_dir,
-            screen_supercell_ns,
-            screen_deltas,
-            screen_fmax_values,
-            negative_phonon_threshold_thz,
-            soft_mode_max_iterations,
-            soft_mode_displacement_scales,
-            soft_mode_num_top_structures_to_analyze,
-            phonon_path_npoints,
-            phonon_dos_grid,
-            default_traj_kT,
-            cell_scale_factors,
-            num_modes_to_return,
-            ga_population_size,
-            ga_mutation_rate,
-            num_new_points_per_iteration,
+            args.screen_supercell_ns, # Now from args
+            args.screen_deltas,       # Now from args
+            args.screen_fmax_values,  # Now from args
+            args.negative_phonon_threshold_thz, # Now from args
+            args.soft_mode_max_iterations,      # Now from args
+            args.soft_mode_displacement_scales, # Now from args
+            args.soft_mode_num_top_structures_to_analyze, # Now from args
+            args.phonon_path_npoints, # Now from args
+            args.phonon_dos_grid,     # Now from args
+            args.traj_kT,             # Now from args
+            args.cell_scale_factors,  # Now from args
+            args.num_modes_to_return, # Now from args
+            args.ga_population_size,  # Now from args
+            args.ga_mutation_rate,    # Now from args
+            args.num_new_points_per_iteration, # Now from args
         )
     else:
         print("\n--- Step 0.3: Running Single Calculation Mode ---")
@@ -596,16 +636,16 @@ def main():
         print("Run settings saved.")
 
         # Execute the single phonon analysis step
-        softest_modes_info, most_negative_freq, time_taken = run_single_phonon_analysis( # Changed to softest_modes_info (list)
+        softest_modes_info, most_negative_freq, time_taken = run_single_phonon_analysis(
             current_atoms, calculator, args.engine, args.units, args.supercell_n, args.delta, args.fmax, current_run_output_dir, prefix=cif_filename_base,
-            phonon_path_npoints=phonon_path_npoints,
-            phonon_dos_grid=phonon_dos_grid,
-            traj_kT=default_traj_kT,
-            num_modes_to_return=num_modes_to_return,
+            phonon_path_npoints=args.phonon_path_npoints, # Now from args
+            phonon_dos_grid=args.phonon_dos_grid,     # Now from args
+            traj_kT=args.traj_kT,                     # Now from args
+            num_modes_to_return=args.num_modes_to_return, # Now from args
         )
 
         # If --run-soft-mode-after-single is enabled and a soft mode is detected
-        threshold_in_current_units = negative_phonon_threshold_thz
+        threshold_in_current_units = args.negative_phonon_threshold_thz # Now from args
         if args.units == "cm-1":
             threshold_in_current_units *= 33.35641
         elif args.units == "eV":
@@ -619,15 +659,18 @@ def main():
                 output_dir,
                 current_atoms, # The structure that had the soft mode
                 softest_modes_info, # The softest mode info list from that structure
-                max_iterations=soft_mode_max_iterations,
-                soft_mode_displacement_scales=soft_mode_displacement_scales,
-                num_top_structures_to_analyze=soft_mode_num_top_structures_to_analyze,
-                negative_phonon_threshold_thz=negative_phonon_threshold_thz,
-                phonon_path_npoints=phonon_path_npoints,
-                phonon_dos_grid=phonon_dos_grid,
-                default_traj_kT=default_traj_kT,
-                cell_scale_factors=cell_scale_factors,
-                num_modes_to_return=num_modes_to_return
+                max_iterations=args.soft_mode_max_iterations, # Now from args
+                soft_mode_displacement_scales=args.soft_mode_displacement_scales, # Now from args
+                num_top_structures_to_analyze=args.soft_mode_num_top_structures_to_analyze, # Now from args
+                negative_phonon_threshold_thz=args.negative_phonon_threshold_thz, # Now from args
+                phonon_path_npoints=args.phonon_path_npoints, # Now from args
+                phonon_dos_grid=args.phonon_dos_grid,     # Now from args
+                default_traj_kT=args.traj_kT,             # Now from args
+                cell_scale_factors=args.cell_scale_factors, # Now from args
+                num_modes_to_return=args.num_modes_to_return, # Now from args
+                ga_population_size=args.ga_population_size, # Now from args
+                ga_mutation_rate=args.ga_mutation_rate,   # Now from args
+                num_new_points_per_iteration=args.num_new_points_per_iteration, # Now from args
             )
         elif args.run_soft_mode_after_single:
             print(f"\nNo significant soft mode detected ({most_negative_freq:.4f} {args.units}) in single run. Skipping iterative soft mode optimization.")
@@ -643,15 +686,18 @@ def main():
                 primitive_output_dir, # New output directory for primitive cell
                 current_atoms, # The primitive cell structure (already primitive if from run_single_phonon_analysis)
                 softest_modes_info, # The softest mode info list from that structure
-                max_iterations=soft_mode_max_iterations,
-                soft_mode_displacement_scales=soft_mode_displacement_scales,
-                num_top_structures_to_analyze=soft_mode_num_top_structures_to_analyze,
-                negative_phonon_threshold_thz=negative_phonon_threshold_thz,
-                phonon_path_npoints=phonon_path_npoints,
-                phonon_dos_grid=phonon_dos_grid,
-                default_traj_kT=default_traj_kT,
-                cell_scale_factors=cell_scale_factors,
-                num_modes_to_return=num_modes_to_return
+                max_iterations=args.soft_mode_max_iterations, # Now from args
+                soft_mode_displacement_scales=args.soft_mode_displacement_scales, # Now from args
+                num_top_structures_to_analyze=args.soft_mode_num_top_structures_to_analyze, # Now from args
+                negative_phonon_threshold_thz=args.negative_phonon_threshold_thz, # Now from args
+                phonon_path_npoints=args.phonon_path_npoints, # Now from args
+                phonon_dos_grid=args.phonon_dos_grid,     # Now from args
+                default_traj_kT=args.traj_kT,             # Now from args
+                cell_scale_factors=args.cell_scale_factors, # Now from args
+                num_modes_to_return=args.num_modes_to_return, # Now from args
+                ga_population_size=args.ga_population_size, # Now from args
+                ga_mutation_rate=args.ga_mutation_rate,   # Now from args
+                num_new_points_per_iteration=args.num_new_points_per_iteration, # Now from args
             )
         elif args.displace_primitive:
             print(f"\nNo significant soft mode detected ({most_negative_freq:.4f} {args.units}) in single run. Skipping primitive cell iterative soft mode optimization.")
@@ -661,7 +707,6 @@ def main():
 --- END FILE: {file_path} ---
 
 --- FILE: vibroml/auto_optimize.py ---
-# auto_optimize.py (Revised and Formatted)
 import os
 import sys
 import json
@@ -684,9 +729,6 @@ from pymatgen.io.ase import AseAtomsAdaptor
 from ase.io import read, write
 
 
-# analyze_and_resample function is removed as per plan.
-
-
 def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2):
     """
     Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
@@ -699,7 +741,7 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, de
         units (str): Units for frequencies (e.g., "THz", "cm-1").
         supercell_n (int): Supercell size (N,N,N).
         delta (float): Displacement delta for phonon calculation.
-        fmax (float): Maximum force for relaxation convergence.
+        fmax (float): Float: Maximum force for relaxation convergence.
         output_dir (str): Directory to save output files.
         prefix (str): Prefix for output filenames (default "phonon_run").
         phonon_path_npoints (int): Number of points along the phonon path (default 100).
@@ -1077,7 +1119,9 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
                     'params': individual_params,
                     'energy_per_atom': None, # Indicate failure
                     'relaxed_atoms': None,
-                    'original_file': None
+                    'original_file': None,
+                    'iteration': iteration_idx, # ADDED  
+                    'sample': i + 1 # ADDED
                 })
                 continue
 
@@ -1087,7 +1131,7 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
             # The generate_displaced_supercells function now creates a structure like:
             # base_output_dir/iteration_idx/supercell_NxNxN/filename.cif
             # So, the folder to relax is base_output_dir/iteration_idx/supercell_NxNxN
-            # Let's get the unique supercell folders from generated_cif_paths
+            # Let's get the unique supercell_folders from generated_cif_paths
             unique_supercell_folders = list(set(os.path.dirname(fpath) for fpath in generated_cif_paths))
 
             sample_relaxation_results = []
@@ -1116,7 +1160,9 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
                     'original_file': best_result_for_sample['original_file'],
                     'num_atoms': best_result_for_sample.get('num_atoms', 'N/A'),  
                     'international_symbol': best_result_for_sample.get('international_symbol', 'N/A'),  
-                    'crystal_system': best_result_for_sample.get('crystal_system', 'N/A')
+                    'crystal_system': best_result_for_sample.get('crystal_system', 'N/A'),
+                    'iteration': iteration_idx, # ADDED  
+                    'sample': i + 1 # ADDED
                 })
                 print(f"    Sample {i+1} relaxed. Lowest energy: {best_result_for_sample['energy_per_atom']:.6f} eV/atom")
             else:
@@ -1125,7 +1171,9 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
                     'params': individual_params,
                     'energy_per_atom': None, # Indicate failure
                     'relaxed_atoms': None,
-                    'original_file': None
+                    'original_file': None,
+                    'iteration': iteration_idx, # ADDED  
+                    'sample': i + 1 # ADDED
                 })
 
         # Add this iteration's results to the master list for GA evolution in next iteration
@@ -1143,8 +1191,9 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
         with open(iteration_summary_filepath, 'w') as f:    
             f.write(f"--- Relaxation Summary for Iteration {iteration_idx} ---\n")    
             f.write(f"Analysis Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")    
-            f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'GA Params':<50}\n")    
-            f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*50:<50}\n")    
+            # MODIFIED HEADER: Iter and Sample appear before GA Params
+            f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'Iter':<6} {'Sample':<8} {'GA Params':<50}\n")    
+            f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*6:<6} {'-'*8:<8} {'-'*50:<50}\n")    
     
             # Sort valid_iteration_results by energy_per_atom for this summary    
             sorted_iter_results = sorted(valid_iteration_results, key=lambda x: x['energy_per_atom'])    
@@ -1155,10 +1204,13 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
                 crystal_system = result.get('crystal_system', 'N/A')  
                 energy = result.get('energy_per_atom', 'FAIL')    
                 params = result.get('params', ('N/A', 'N/A', 'N/A'))    
-                params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:{params[2]}" if isinstance(params, tuple) else str(params)    
+                # Format cell_transformation_vector to 3 decimal places and duplicate space
+                cell_transform_str = ", ".join([f"{val:.3f}" for val in params[2]])
+                params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:({cell_transform_str}, {cell_transform_str})" if isinstance(params, tuple) else str(params)    
     
                 energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)    
-                f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {params_str:<50}\n")    
+                # MODIFIED LINE: Iter and Sample appear before GA Params
+                f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {str(result.get('iteration', 'N/A')):<6} {str(result.get('sample', 'N/A')):<8} {params_str:<50} \n")      
         print(f"Iteration {iteration_idx} relaxation summary saved to: {iteration_summary_filepath}")
         # NEW SNIPPET END
 
@@ -1235,14 +1287,39 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
         energy = result['energy_per_atom']
         # Also print the GA parameters for context
         params = result.get('params', ('N/A', 'N/A', 'N/A'))
-        print(f"  {idx}. {original_file} (Disp1: {params[0]:.3f}, Ratio21: {params[1]:.3f}, CellTrans: {params[2]}): {energy:.6f} eV/atom")
-
+        cell_transform_str = ", ".join([f"{val:.3f}" for val in params[2]])
+        print(f"  {idx}. Iter {result.get('iteration', 'N/A')}, Sample {result.get('sample', 'N/A')}: {original_file} (Disp1: {params[0]:.3f}, Ratio21: {params[1]:.3f}, Cell:({cell_transform_str}, {cell_transform_str})): {energy:.6f} eV/atom")
+        
 
     print(f"\nSelected the top {len(final_top_structures)} structures from all iterations for final analysis:")
     for i, result in enumerate(final_top_structures):
         original_file_base = os.path.splitext(os.path.basename(result['original_file']))[0]
         params = result.get('params', ('N/A', 'N/A', 'N/A'))
-        print(f"  {i+1}. {original_file_base} (Disp1: {params[0]:.3f}, Ratio21: {params[1]:.3f}, CellTrans: {params[2]}) (Energy: {result['energy_per_atom']:.6f} eV/atom)")
+        cell_transform_str = ", ".join([f"{val:.3f}" for val in params[2]])
+        print(f"  {i+1}. Iter {result.get('iteration', 'N/A')}, Sample {result.get('sample', 'N/A')}: {original_file_base} (Disp1: {params[0]:.3f}, Ratio21: {params[1]:.3f}, Cell:({cell_transform_str}, {cell_transform_str})) (Energy: {result['energy_per_atom']:.6f} eV/atom)")
+        
+        # --- NEW SNIPPET START: Save CIF and XYZ for top structures ---  
+        top_structure_relaxed_atoms = result['relaxed_atoms']  
+        final_top_structure_dir = os.path.join(base_output_dir, f"final_top_structures")  
+        os.makedirs(final_top_structure_dir, exist_ok=True)  
+  
+        # Construct a unique filename for the saved top structure  
+        # Include iteration and sample for clarity  
+        top_struct_filename_base = f"top_{i+1}_iter{result.get('iteration', 'N/A')}_sample{result.get('sample', 'N/A')}_{original_file_base}"  
+          
+        final_cif_path = os.path.join(final_top_structure_dir, f"{top_struct_filename_base}.cif")  
+        final_xyz_path = os.path.join(final_top_structure_dir, f"{top_struct_filename_base}.xyz")  
+  
+        try:  
+            write(final_cif_path, top_structure_relaxed_atoms)  
+            print(f"  Saved top structure CIF to: {final_cif_path}")  
+            write(final_xyz_path, top_structure_relaxed_atoms)  
+            print(f"  Saved top structure XYZ to: {final_xyz_path}")  
+        except Exception as e:  
+            print(f"  Error saving CIF/XYZ for top structure {i+1}: {e}")  
+            import traceback  
+            traceback.print_exc()
+
 
     for i, result in enumerate(final_top_structures):
         top_structure_relaxed_supercell = result['relaxed_atoms']
@@ -1269,27 +1346,31 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
     print("\n--- Soft Mode Iterative Optimization Complete ---")
     overall_summary_filepath = os.path.join(base_output_dir, "overall_relaxation_summary.txt")  
       
-    print("\n--- Creating Overall Relaxation Summary (All Iterations) ---")    
-    with open(overall_summary_filepath, 'w') as f:    
-        f.write(f"--- Overall Relaxation Summary (All Iterations) ---\n")    
-        f.write(f"Analysis Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")    
-        f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'GA Params':<50}\n")    
-        f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*50:<50}\n")    
-    
-        # Sort all_iterations_results by energy_per_atom for this summary    
-        sorted_overall_results = sorted(valid_overall_results, key=lambda x: x['energy_per_atom'])    
-    
-        for result in sorted_overall_results:    
-            num_atoms = result.get('num_atoms', 'N/A')  
-            international_symbol = result.get('international_symbol', 'N/A')  
-            crystal_system = result.get('crystal_system', 'N/A')  
-            energy = result.get('energy_per_atom', 'FAIL')    
-            params = result.get('params', ('N/A', 'N/A', 'N/A'))    
-            params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:{params[2]}" if isinstance(params, tuple) else str(params)    
-    
-            energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)    
-            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {params_str:<50}\n")    
-    print(f"Overall relaxation summary saved to: {overall_summary_filepath}")    
+    print("\n--- Creating Overall Relaxation Summary (All Iterations) ---")      
+    with open(overall_summary_filepath, 'w') as f:      
+        f.write(f"--- Overall Relaxation Summary (All Iterations) ---\n")      
+        f.write(f"Analysis Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")      
+        # MODIFIED HEADER: Iter and Sample appear before GA Params
+        f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'Iter':<6} {'Sample':<8} {'GA Params':<50}\n")      
+        f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*6:<6} {'-'*8:<8} {'-'*50:<50} \n")      
+      
+        # Sort all_iterations_results by energy_per_atom for this summary      
+        sorted_overall_results = sorted(valid_overall_results, key=lambda x: x['energy_per_atom'])      
+      
+        for result in sorted_overall_results:      
+            num_atoms = result.get('num_atoms', 'N/A')    
+            international_symbol = result.get('international_symbol', 'N/A')    
+            crystal_system = result.get('crystal_system', 'N/A')    
+            energy = result.get('energy_per_atom', 'FAIL')      
+            params = result.get('params', ('N/A', 'N/A', 'N/A'))      
+            # Format cell_transformation_vector to 3 decimal places and duplicate space
+            cell_transform_str = ", ".join([f"{val:.3f}" for val in params[2]])
+            params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:({cell_transform_str}, {cell_transform_str})" if isinstance(params, tuple) else str(params)      
+      
+            energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)      
+            # MODIFIED LINE: Iter and Sample appear before GA Params
+            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {str(result.get('iteration', 'N/A')):<6} {str(result.get('sample', 'N/A')):<8} {params_str:<50}\n")      
+    print(f"Overall relaxation summary saved to: {overall_summary_filepath}")  
     
     # Print the overall summary to screen    
     with open(overall_summary_filepath, 'r') as f:    
@@ -1311,7 +1392,7 @@ def run_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mod
     "default_units": "THz",
     "default_traj_kT": 1.0,
     "negative_phonon_threshold_thz": -0.1,
-    "soft_mode_max_iterations": 2,
+    "soft_mode_max_iterations": 3,
     "soft_mode_displacement_scales": [10.000, 17.783, 31.623, 56.234, 100.000],
     "soft_mode_num_top_structures_to_analyze": 5,
     "cell_scale_factors": [-0.10, -0.05, 0.0, 0.05, 0.10],

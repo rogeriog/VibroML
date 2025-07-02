@@ -1,0 +1,23 @@
+--- Relaxation Summary for Folder: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/Cs2KInI6/Cs2KInI6_phonon_output_20250701-212948/iter_3/sample_21/iteration_3/supercell_2x1x1 ---
+Analysis Date: 2025-07-02 03:09:05
+
+### Structure: Cs2KInI6_d1_37.096_r21_0.536_c_p050_p050_m165_p10578_p20602_m12281.cif ###
+Original File: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/Cs2KInI6/Cs2KInI6_phonon_output_20250701-212948/iter_3/sample_21/iteration_3/supercell_2x1x1/Cs2KInI6_d1_37.096_r21_0.536_c_p050_p050_m165_p10578_p20602_m12281.cif
+Total Number of Atoms: 20
+Relaxation Status: SUCCESS
+Final Energy: -51.307041 eV
+Final Energy per Atom: -2.565352 eV/atom
+Relaxed File: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/Cs2KInI6/Cs2KInI6_phonon_output_20250701-212948/iter_3/sample_21/iteration_3/supercell_2x1x1/Cs2KInI6_d1_37.096_r21_0.536_c_p050_p050_m165_p10578_p20602_m12281_relaxed.cif
+Relaxed XYZ File: /auto/globalscratch/users/r/g/rgouvea/VibroML/examples/Cs2KInI6/Cs2KInI6_phonon_output_20250701-212948/iter_3/sample_21/iteration_3/supercell_2x1x1/Cs2KInI6_d1_37.096_r21_0.536_c_p050_p050_m165_p10578_p20602_m12281_relaxed.xyz
+
+  --- Relaxed Structure Symmetry Analysis ---
+  Symmetry Precision (Auto-tuned): N/A
+  Space Group Number: 12
+  International Symbol: C2/m
+  Hall Symbol: -C 2y
+  Point Group Symbol: 2/m
+  Crystal System: monoclinic
+  Lattice Type: Not directly available from spglib dataset
+  Number of atoms in primitive cell: 20
+  -------------------------------------------
+

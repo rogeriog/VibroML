@@ -1,0 +1,18 @@
+### Relaxed_in_folder Structure Symmetry Analysis ###
+
+Analysis Date: 2025-07-01 22:46:18
+Symmetry Precision (symprec) - Auto-tuned: 5.0000e-03
+Symprec values checked: 1.0e-04, 5.0e-04, 1.0e-03, 2.0e-03, 5.0e-03, 1.0e-02
+
+Space group number: 147
+International symbol: P-3
+Hall symbol: -P 3
+Point group symbol: -3
+Crystal system: trigonal
+Lattice type: Not directly available from spglib dataset (check debug output for alternatives)
+Number of atoms in primitive cell: 10
+Transformation matrix to primitive cell:
+[[ 1.00000000e+00, -1.00000000e+00, -1.11022302e-16],
+ [ 1.00000000e+00, -1.38777878e-16,  1.00000000e+00],
+ [-1.00000000e+00, -1.00000000e+00, -1.00000000e+00]]
+Origin shift: [9.99997966e-01, 2.09931868e-05, 9.99997862e-01]
