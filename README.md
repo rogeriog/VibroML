@@ -3,7 +3,11 @@
 <div align="center">  
   <img src="logo/VibroML.png" alt="VibroML Logo" width="300px" height="150px">
 </div>
+<<<<<<< HEAD
 AI-Powered Vibrational Analysis & Stability Suite
+=======
+<h3 align="center">AI-Powered Vibrational Analysis & Stability Suite</h3>
+>>>>>>> 0f84048886bbbf4b58e8473bc63843e9a16bebee
 
 [![PyPI Version](https://img.shields.io/pypi/v/vibroml.svg)](https://pypi.org/project/vibroml/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -161,12 +165,4 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for full 
 
 If you use VibroML in your work, please cite:
 
-```
-@software{vibroml2025,
-  author = {Rogerio A. Gouvea},
-  title  = {{VibroML}: Machine-Learned Vibrational Analysis & Stability Toolkit},
-  year   = {2025},
-  url    = {https://github.com/rogeriog/vibroml}
-}
-```
 
