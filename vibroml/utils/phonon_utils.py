@@ -1,16 +1,176 @@
 # utils/phonon_utils.py
 import os
+import sys
+import io
+import time
+import json
 import numpy as np
+from math import pi, sqrt
 from ase.phonons import Phonons
+from ase.io import read, write
+from ase.atoms import Atoms
+from ase.build import make_supercell
+
 # Ensure these imports are correct based on your project structure
 from .config import EV_TO_THZ_FACTOR, THZ_TO_CM_FACTOR, EV_TO_CM_FACTOR
-import json
-from math import pi, sqrt
-from ase.io import read, write
-from ase.atoms import Atoms # <--- ADD THIS IMPORT
-import sys # NEW IMPORT  
-import io  # NEW IMPORT  
-import re  # NEW IMPORT
+from .plotting_utils import plot_phonon_results
+from .utils import save_raw_data
+from .genetic_algorithm import GeneticAlgorithm
+from .structure_utils import estimate_commensurate_supercell_size
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_n, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None):
+   """
+   Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
+
+   Args:
+      atoms (ase.Atoms): The ASE Atoms object representing the structure.
+      calculator (ase.calculators.calculator.Calculator): The ASE calculator to use.
+      engine (str): The name of the DFT engine (e.g., "VASP", "QuantumEspresso").
+      units (str): Units for frequencies (e.g., "THz", "cm-1").
+      supercell_n (int): Supercell size (N,N,N).
+      delta (float): Displacement delta for phonon calculation.
+      fmax (float): Float: Maximum force for relaxation convergence.
+      output_dir (str): Directory to save output files.
+      prefix (str): Prefix for output filenames (default "phonon_run").
+      phonon_path_npoints (int): Number of points along the phonon path (default 100).
+      phonon_dos_grid (tuple): Grid for DOS calculation (default (40,40,40)).
+      traj_kT (float): Temperature for trajectory generation (default 0.1).
+      num_modes_to_return (int): The number of softest modes to return (default 2).
+      ph_obj_for_specific_mode (ase.phonons.Phonons, optional): Pre-calculated Phonons object for specific mode analysis.
+      q_point_for_specific_mode (np.array, optional): User-defined q-point for specific mode analysis.
+      band_idx_for_specific_mode (int, optional): User-defined mode index for specific mode analysis.
+
+   Returns:
+      tuple: A tuple containing:
+         - list: A list of dictionaries, each containing information about a softest mode,
+                  including its raw displacements. Returns an empty list if no soft modes found.
+         - float: The most negative frequency found (bsmin).
+         - float: The total time taken for the analysis.
+   """
+   start_time = time.time()
+
+   os.makedirs(output_dir, exist_ok=True)
+   print(f"\n--- Running Single Phonon Analysis in: {output_dir} ---")
+
+   print("\n--- Step 1: Running Phonon Calculation ---")
+   ph = run_phonon_calculation(atoms, calculator, supercell_n, delta, output_dir)
+   if ph is None:
+      print("Error during phonon calculation setup.")
+      return [], None, None # Return empty list for modes
+
+   print("\n--- Step 2: Getting and Processing Phonon Results ---")
+   bs, path, dos, bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, discontinuities, y_label, bsmin = get_phonon_results(ph, atoms, units, phonon_path_npoints, phonon_dos_grid)
+
+   print("\n--- Step 3: Saving Raw Data ---")
+   save_raw_data(bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, supercell_n, delta, fmax, output_dir)
+
+   print("\n--- Step 4: Plotting Results ---")
+   struct_formula = atoms.get_chemical_formula()
+   plot_phonon_results(bs_energies, dos, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, discontinuities, y_label, struct_formula, prefix, supercell_n, delta, fmax, output_dir)
+
+   print(f"\n--- Step 5: Analyzing Special Points and Top {num_modes_to_return} Softest Modes ---")
+
+   softest_modes_info_list = analyze_special_points_and_modes(
+      ph, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir, prefix, traj_kT=traj_kT, num_modes_to_return=num_modes_to_return,
+      target_q_point=q_point_for_specific_mode, target_band_idx=band_idx_for_specific_mode
+   )
+   time_taken = time.time() - start_time
+
+   summary_filename = os.path.join(output_dir, f"{prefix}_phonon_run_summary.txt")
+   with open(summary_filename, 'w') as f:
+      f.write(f"--- Phonon Run Summary ---\n")
+      f.write(f"Structure Formula: {atoms.get_chemical_formula()}\n")
+      f.write(f"Total Number of Atoms: {len(atoms)}\n")
+      f.write(f"Engine Used: {engine}\n")
+      f.write(f"Units: {units}\n")
+      f.write(f"Supercell Size (N,N,N): ({supercell_n}, {supercell_n}, {supercell_n})\n")
+      f.write(f"Displacement Delta: {delta}\n")
+      f.write(f"Fmax for Relaxation: {fmax}\n")
+      f.write(f"Most Negative Frequency (overall): {bsmin:.4f} {units}\n")
+      f.write(f"Time Taken for Phonon Analysis: {time_taken:.2f} seconds\n\n")
+      try:
+         energy = atoms.get_potential_energy()
+         energy_per_atom = energy / len(atoms)
+         f.write(f"Energy of Structure: {energy:.6f} eV\n")
+         f.write(f"Energy per Atom: {energy_per_atom:.6f} eV/atom\n\n")
+      except Exception as e:
+         f.write(f"Could not retrieve energy for this structure: {e}\n\n")
+
+      # Write information about the top N softest modes
+      if softest_modes_info_list:
+         f.write(f"--- Top {len(softest_modes_info_list)} Softest Modes Found at Special K-points ---\n")
+         for i, mode_info in enumerate(softest_modes_info_list):
+               f.write(f"Mode {i+1}:\n")
+               f.write(f"   Label: {mode_info.get('label', 'N/A')}\n")
+               f.write(f"   Coordinate (q-point): {mode_info.get('coordinate', 'N/A')}\n") # Changed label to q-point
+               f.write(f"   Frequency: {mode_info.get('frequency', 'N/A'):.4f} {units}\n")
+               f.write(f"   Band Index: {mode_info.get('band_index', 'N/A')}\n")
+               f.write("\n")
+      else:
+         f.write("No negative frequencies found at special k-points.\n\n")
+
+      # Print user-defined mode if available
+      if q_point_for_specific_mode is not None and band_idx_for_specific_mode is not None:
+         try:
+               # Get frequencies at the user-defined q-point
+               # First, find the index of the user's q-point in the band path
+               user_q_point_in_path_idx = None
+               for i, kpt in enumerate(path.kpts):
+                  if np.allclose(kpt, q_point_for_specific_mode):
+                     user_q_point_in_path_idx = i
+                     break
+               
+               if user_q_point_in_path_idx is not None:
+                  freqs_at_user_q = bs_energies[user_q_point_in_path_idx]
+                  if 0 <= band_idx_for_specific_mode < len(freqs_at_user_q):
+                     user_mode_freq = freqs_at_user_q[band_idx_for_specific_mode]
+                     f.write(f"--- User-Defined Mode Analysis ---\n")
+                     f.write(f"User-Defined Q-point: ({q_point_for_specific_mode[0]:.4f}, {q_point_for_specific_mode[1]:.4f}, {q_point_for_specific_mode[2]:.4f})\n")
+                     f.write(f"User-Defined Mode Index: {band_idx_for_specific_mode}\n")
+                     f.write(f"Frequency of User-Defined Mode: {user_mode_freq:.4f} {units}\n\n")
+                  else:
+                     f.write(f"--- User-Defined Mode Analysis ---\n")
+                     f.write(f"Warning: User-defined mode index {band_idx_for_specific_mode} is out of bounds for q-point {q_point_for_specific_mode}.\n\n")
+               else:
+                  f.write(f"--- User-Defined Mode Analysis ---\n")
+                  f.write(f"Warning: User-defined q-point {q_point_for_specific_mode} not found in the calculated band path.\n\n")
+         except Exception as e:
+               f.write(f"--- User-Defined Mode Analysis ---\n")
+               f.write(f"Error analyzing user-defined mode: {e}\n\n")
+
+
+      f.write("Path of K-points:\n")
+      for i, (dist, label) in enumerate(zip(special_k_point_distances, special_k_point_labels)):
+         f.write(f"  {label}: {dist:.4f}\n")
+      f.write("\n")
+      symmetry_file_path = os.path.join(output_dir, "relaxed_symmetry_analysis.txt")
+      if not os.path.exists(symmetry_file_path):
+         symmetry_file_path = os.path.join(output_dir, "initial_symmetry_analysis.txt")
+      if os.path.exists(symmetry_file_path):
+         try:
+               with open(symmetry_file_path, 'r') as sym_f:
+                  sym_content = sym_f.read()
+                  sg_number_line = next((line for line in sym_content.splitlines() if "Space group number:" in line), None)
+                  sg_symbol_line = next((line for line in sym_content.splitlines() if "International symbol:" in line), None)
+                  if sg_number_line:
+                     f.write(f"{sg_number_line.strip()}\n")
+                  if sg_symbol_line:
+                     f.write(f"{sg_symbol_line.strip()}\n")
+         except Exception as e:
+               f.write(f"Could not read space group from symmetry analysis file: {e}\n")
+      else:
+         f.write("Space Group: Not available (symmetry analysis file not found).\n")
+
+   print(f"Comprehensive phonon run summary saved to: {summary_filename}")
+
+   end_time = time.time()
+   time_taken = end_time - start_time
+   print(f'Total time taken for this phonon analysis: {time_taken:.2f} s')
+
+   # Return the list of softest modes, the overall minimum frequency, and time taken
+   return softest_modes_info_list, bsmin, time_taken
+
+
+
 def run_phonon_calculation(atoms, calculator, supercell_n, delta, output_dir):
    """Sets up and runs the phonon calculation."""
    atoms.set_calculator(calculator) # Ensure calculator is set for phonon calculation
@@ -32,42 +192,73 @@ def run_phonon_calculation(atoms, calculator, supercell_n, delta, output_dir):
    print("Phonon calculation completed.")
    return ph
 
-def get_phonon_results(ph, atoms, units, phonon_path_npoints=100, phonon_dos_grid=(40,40,40)): # NEW ARGS
+def save_phonon_results(ph, output_dir, units, bs, dos, dos_energies):
+   # Save band structure data
+   try:
+      import pickle
+      with open(os.path.join(output_dir, "bands.pkl"), "wb") as f:
+         pickle.dump(bs, f)
+      print(f"  - Saved band structure to {os.path.join(output_dir, 'bands.pkl')}")
+   except Exception as e:
+      print(f"  - Could not save band structure: {e}")
+
+   # Save DOS data
+   if dos is not None and dos_energies is not None:
+      try:
+         dos_data = {
+            "units": units,
+            "frequencies": dos_energies.tolist(), # Use the unit-converted energies
+            "dos_values": dos.get_weights().tolist() # Use the weights from the DOS object
+         }
+         with open(os.path.join(output_dir, "dos.json"), "w") as f:
+            json.dump(dos_data, f, indent=4)
+         print(f"  - Saved DOS to {os.path.join(output_dir, 'dos.json')}")
+      except Exception as e:
+         print(f"  - Could not save DOS: {e}")
+   else:
+      print("  - DOS data not provided, skipping DOS save.")
+
+   # Optionally, save the primitive cell structure itself
+   try:
+      write(os.path.join(output_dir, "primitive_cell.cif"), ph.atoms)
+      print(f"  - Saved primitive cell structure to {os.path.join(output_dir, 'primitive_cell.cif')}")
+   except Exception as e:
+      print(f"  - Could not save primitive cell structure: {e}")
+
+def get_phonon_results(ph, atoms, units, phonon_path_npoints=100, phonon_dos_grid=(40,40,40)):
    """Gets band structure and DOS results and converts units."""
    # Get the band path object
    path = atoms.cell.bandpath(npoints=phonon_path_npoints) # Use phonon_path_npoints
 
-   # --- NEW: Capture stderr to suppress ASE warnings and summarize ---  
-   old_stderr = sys.stderr  
+   # --- Capture stderr to suppress ASE warnings and summarize ---
+   old_stderr = sys.stderr
    sys.stderr = captured_stderr = io.StringIO()
+   
+   try:
+       # Get band structure and DOS in default energy units (eV)
+       bs = ph.get_band_structure(path, verbose=False)
+       dos = ph.get_dos(kpts=phonon_dos_grid, verbose=False).sample_grid(npts=200, width=1e-4)
+   finally:
+       sys.stderr = old_stderr # Restore stderr immediately
 
+   # Process captured warnings
+   captured_warnings = captured_stderr.getvalue()
+   imaginary_freq_warnings = []
+   for line in captured_warnings.splitlines():
+       if "WARNING, " in line and "imaginary frequencies at q =" in line:
+           imaginary_freq_warnings.append(line.strip())
 
-   try:  
-       # Get band structure and DOS in default energy units (eV)  
-       bs = ph.get_band_structure(path, verbose=False)  
-       dos = ph.get_dos(kpts=phonon_dos_grid, verbose=False).sample_grid(npts=200, width=1e-4)  
-   finally:  
-       sys.stderr = old_stderr # Restore stderr immediately  
-  
-   # Process captured warnings  
-   captured_warnings = captured_stderr.getvalue()  
-   imaginary_freq_warnings = []  
-   for line in captured_warnings.splitlines():  
-       if "WARNING, " in line and "imaginary frequencies at q =" in line:  
-           imaginary_freq_warnings.append(line.strip())  
-  
-   if imaginary_freq_warnings:  
-       print("\n--- ASE Phonon Warnings Summary ---")  
-       print(f"Detected {len(imaginary_freq_warnings)} instances of imaginary frequencies during band structure calculation.")  
-       # Optionally, print the first few or unique warnings  
-       unique_warnings = sorted(list(set(imaginary_freq_warnings)))  
-       if unique_warnings:  
-           print("Examples of warnings (first 3 unique):")  
-           for i, warning in enumerate(unique_warnings[:3]):  
-               print(f"  - {warning}")  
-       print("-----------------------------------\n")  
-   # --- END NEW BLOCK ---
-  
+   if imaginary_freq_warnings:
+       print("\n--- ASE Phonon Warnings Summary ---")
+       print(f"Detected {len(imaginary_freq_warnings)} instances of imaginary frequencies during band structure calculation.")
+       # Optionally, print the first few or unique warnings
+       unique_warnings = sorted(list(set(imaginary_freq_warnings)))
+       if unique_warnings:
+           print("Examples of warnings (first 3 unique):")
+           for i, warning in enumerate(unique_warnings[:3]):
+               print(f"  - {warning}")
+       print("-----------------------------------\n")
+
    # Convert energies based on chosen units
    if units == "THz":
       bs_energies = bs.energies[0] / EV_TO_THZ_FACTOR # Access the first (and only) spin channel
@@ -90,175 +281,462 @@ def get_phonon_results(ph, atoms, units, phonon_path_npoints=100, phonon_dos_gri
 
    # Correctly get k-point distances and labels for plotting
    all_k_point_distances, special_k_point_distances, special_k_point_labels = bs.get_labels()
-
+   
+   # Check for discontinuities in special k-point distances
+   discontinuities = []
+   for i in range(len(special_k_point_distances) - 1):
+         if abs(special_k_point_distances[i] - special_k_point_distances[i+1]) < 1e-6:
+            discontinuities.append(i)
+   
+   if discontinuities:
+         print("\nDetected band structure discontinuities at:")
+         for idx in discontinuities:
+            print(f"  - Between {special_k_point_labels[idx]} and {special_k_point_labels[idx+1]}"
+                  f" at distance {special_k_point_distances[idx]:.4f}")
+   
    bsmin = np.min(bs_energies) if bs_energies.size > 0 else 0
 
    print(f'Most negative frequency: {bsmin:.4f} {units}')
 
    # Return bs and path objects as well for further analysis
-   return bs, path, dos, bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, y_label, bsmin
+   return bs, path, dos, bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, discontinuities, y_label, bsmin
 
-def analyze_special_points_and_modes(ph, bs, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir, traj_kT=1, num_modes_to_return=2):  
-   """Analyzes frequencies at special points and identifies the softest modes.  
+def get_eigenvector_for_q_and_band_index(ph, q_point, band_idx):
+   """
+   Retrieves the eigenvector (raw displacements) for a specific q-point and mode index.
+
+   Args:
+      ph (ase.phonons.Phonons): The Phonons object.
+      q_point (np.array): The q-point in fractional reciprocal coordinates.
+      band_idx (int): The index of the mode (0-indexed).
+
+   Returns:
+      np.ndarray: The raw displacements (eigenvector) for the specified mode,
+                  or None if the mode cannot be retrieved.
+   """
+   try:
+      # ph.band_structure returns (frequencies, eigenvectors) for the given q-points
+      # The eigenvectors are (num_q_points, num_bands, num_atoms_primitive * 3)
+      omega_at_q, u_at_q = ph.band_structure([q_point], modes=True)
+
+      # Check if band_idx is valid
+      num_bands = u_at_q.shape[1]
+      if not (0 <= band_idx < num_bands):
+         print(f"Error: Mode index {band_idx} is out of bounds. Available modes: 0 to {num_bands-1}.")
+         return None
+
+      eigenvector = u_at_q[0, band_idx] # Select the first q-point (only one requested) and the specific mode
+      num_atoms_primitive = len(ph.atoms)
+      raw_displacements = eigenvector.reshape(num_atoms_primitive, 3)
+      return raw_displacements
+   except Exception as e:
+      print(f"Error retrieving eigenvector for q-point {q_point} and mode {band_idx}: {e}")
+      import traceback
+      traceback.print_exc()
+      return None
+
+def _process_and_save_mode_data(ph, q_point, band_idx, frequency, units, output_dir, traj_kT, prefix=""):
+   """
+   Helper function to process, save, and visualize data for a given phonon mode.
+   This consolidates the repetitive logic for both softest modes and target modes.
+
+   Args:
+      ph (ase.phonons.Phonons): The Phonons object.
+      q_point (np.array): The q-point (fractional coordinates) of the mode.
+      band_idx (int): The index of the mode (0-indexed).
+      frequency (float): The frequency of the mode.
+      units (str): Units for frequency (e.g., "THz", "cm-1").
+      output_dir (str): Directory to save output files.
+      traj_kT (float): Temperature for trajectory generation.
+      prefix (str): A prefix for output filenames (e.g., "softest_mode_1", "target_q0.5_0_0").
+   """
+   q_point_str_for_filename = "_".join([f"{c:.3f}" for c in q_point]).replace('.', 'p').replace('-', 'm')  
+   base_filename = f"{prefix}_q{q_point_str_for_filename}_mode{band_idx}"  
+   print(f"\n--- Processing Mode: {prefix} at Q-point: {q_point}, Mode Index: {band_idx} ---")  
+   print(f"   Frequency: {frequency:.4f} {units}")  
   
-   Args:  
-      ph (ase.phonons.Phonons): The Phonons object.  
-      bs (ase.spectrum.band_structure.BandStructure): The BandStructure object.  
-      path (ase.dft.kpoints.BandPath): The BandPath object.  
-      bs_energies (np.ndarray): The phonon band energies (frequencies).  
-      special_k_point_distances (list): Distances of special k-points.  
-      special_k_point_labels (list): Labels of special k-points.  
-      units (str): Units for frequencies (e.g., "THz", "cm-1").  
-      output_dir (str): Directory to save output files.  
-      traj_kT (float): Temperature for trajectory generation (default 0.1).  
-      num_modes_to_return (int): The number of softest modes to return (default 2).  
-   """  
-   print("\n--- Analyzing Special K-points ---")  
+   try:  
+      raw_displacements = get_eigenvector_for_q_and_band_index(ph, q_point, band_idx)  
+      if raw_displacements is None:  
+         print(f"  - Could not retrieve raw displacements for {base_filename}.")  
+         return  
   
-   special_point_analysis = []  
-   all_negative_modes_info = [] # To store all negative modes found at special points  
+      # Ensure raw_displacements is a NumPy array before processing  
+      raw_displacements = np.asarray(raw_displacements)  
   
-   special_point_coords = path.special_points # Dictionary mapping label to coordinate  
-  
-   for label, distance in zip(special_k_point_labels, special_k_point_distances):  
-      coord = special_point_coords.get(label)  
-      if coord is None:  
-         print(f"Warning: Could not find coordinate for special point label '{label}'. Skipping.")  
-         continue  
-  
-      # Find the index in path.kpts that matches this coordinate  
-      kpt_index = None  
-      for i, kpt in enumerate(path.kpts):  
-         if np.allclose(kpt, coord):  
-               kpt_index = i  
-               break  
-  
-      if kpt_index is None:  
-            print(f"Warning: Could not find k-point index for coordinate {coord} (label '{label}'). Skipping.")  
-            continue  
-  
-      # Get frequencies at this k-point index  
-      freqs_at_kpt = bs_energies[kpt_index]  
-  
-      # Iterate through all bands at this k-point to find negative frequencies  
-      for band_idx, freq in enumerate(freqs_at_kpt):  
-         if freq < 0: # Only consider negative frequencies  
-            mode_info = {  
-                  "label": label,  
-                  "coordinate": [float(c) for c in coord], # Convert numpy array to list for JSON  
-                  "frequency": float(freq),  
-                  "band_index": int(band_idx),  
-                  "kpoint_index_in_path": int(kpt_index) # Store index in path.kpts  
-            }  
-            all_negative_modes_info.append(mode_info)  
-  
-      # Also add the minimum frequency at this k-point to special_point_analysis (even if positive)  
-      min_freq_at_kpt = np.min(freqs_at_kpt)  
-      min_band_index_at_kpt = np.argmin(freqs_at_kpt)  
-      special_point_analysis.append({  
-         "label": label,  
-         "coordinate": [float(c) for c in coord],  
-         "min_frequency": float(min_freq_at_kpt),  
-         "band_index": int(min_band_index_at_kpt)  
-      })  
-      print(f"   Special Point: {label} ({coord[0]:.4f}, {coord[1]:.4f}, {coord[2]:.4f}) - Minimum Frequency: {min_freq_at_kpt:.4f} {units}")  
-  
-  
-   # Sort all found negative modes by frequency (most negative first)  
-   all_negative_modes_info.sort(key=lambda x: x['frequency'])  
-  
-   # Select the top N softest modes  
-   top_n_softest_modes = []  
-   processed_modes_keys = set() # To avoid duplicate modes (same k-point, same band)  
-  
-   for mode_info in all_negative_modes_info:  
-      mode_key = (mode_info['kpoint_index_in_path'], mode_info['band_index'])  
-      if mode_key not in processed_modes_keys:  
-         top_n_softest_modes.append(mode_info)  
-         processed_modes_keys.add(mode_key)  
-         if len(top_n_softest_modes) >= num_modes_to_return:  
-            break  
-  
-   # Save special point analysis (this includes all special points, not just negative modes)  
-   analysis_filename = os.path.join(output_dir, "special_point_analysis.json")  
-   with open(analysis_filename, 'w') as f:  
-      json.dump(special_point_analysis, f, indent=4)  
-   print(f"\nSpecial point analysis saved to {analysis_filename}")  
-  
-   # Report and get displacements for the top N softest modes  
-   all_soft_modes_with_displacements = []  
-   if top_n_softest_modes:  
-      print(f"\n--- Top {len(top_n_softest_modes)} Softest Modes Analysis ---")  
-      for i, softest_mode_info in enumerate(top_n_softest_modes):  
-         print(f"\nMode {i+1}:")  
-         print(f"   Label: {softest_mode_info['label']}")  
-         print(f"   Coordinate: ({softest_mode_info['coordinate'][0]:.4f}, {softest_mode_info['coordinate'][1]:.4f}, {softest_mode_info['coordinate'][2]:.4f})")  
-         print(f"   Frequency: {softest_mode_info['frequency']:.4f} {units}")  
-         print(f"   Band Index: {softest_mode_info['band_index']}")  
-  
-         try:  
-            q_c = np.array(softest_mode_info['coordinate'])  
-            band_index = softest_mode_info['band_index']  
-  
-            omega_at_q, u_at_q = ph.band_structure([q_c], modes=True)  
-            eigenvector = u_at_q[0, band_index].real  
-            num_atoms_primitive = len(ph.atoms)  
-            raw_displacements = eigenvector.reshape(num_atoms_primitive, 3)  
-  
-            softest_mode_info['raw_displacements'] = raw_displacements.tolist()  
-            all_soft_modes_with_displacements.append(softest_mode_info)  
-  
-            max_disp_magnitude = np.max(np.linalg.norm(raw_displacements, axis=1))  
-            if max_disp_magnitude > 1e-6:  
-                  scaled_displacements_for_viz = raw_displacements / max_disp_magnitude * 0.5  
-            else:  
-                  scaled_displacements_for_viz = raw_displacements  
-  
-            print("Displacements for this mode (in primitive cell coordinates, scaled for visualization):")  
-            primitive_atoms = ph.atoms  
-            for j, (atom, disp) in enumerate(zip(primitive_atoms, scaled_displacements_for_viz)):  
-                  print(f"   Atom {j+1} ({atom.symbol}): dx={disp[0]:.6f}, dy={disp[1]:.6f}, dz={disp[2]:.6f} Å")  
-  
-            displacements_filename = os.path.join(output_dir, f"softest_mode_{i+1}_{softest_mode_info['label']}_band{band_index}_displacements.txt")  
-            with open(displacements_filename, 'w') as f:  
-                  f.write(f"Softest mode {i+1} at special point {softest_mode_info['label']} ({softest_mode_info['coordinate']})\n")  
-                  f.write(f"Frequency: {softest_mode_info['frequency']:.4f} {units}\n")  
-                  f.write(f"Band Index: {softest_mode_info['band_index']}\n\n")  
-                  f.write("Displacements (in primitive cell coordinates, scaled for visualization):\n")  
-                  for j, (atom, disp) in enumerate(zip(primitive_atoms, scaled_displacements_for_viz)):  
-                     f.write(f"Atom {j+1} ({atom.symbol}): dx={disp[0]:.6f}, dy={disp[1]:.6f}, dz={disp[2]:.6f} Å\n")  
-            print(f"Displacements for mode {i+1} saved to {displacements_filename}")  
-  
-            original_ph_name = ph.name  
-            ph.name = os.path.join(output_dir, f"softest_mode_{i+1}_{softest_mode_info['label']}_band{band_index}")  
-            ph.write_modes(  
-                  q_c,  
-                  branches=[band_index],  
-                  kT=traj_kT,  
-                  repeat=(2, 2, 2),  
-                  center=True  
-            )  
-            traj_filename_generated = f"{ph.name}.mode.{band_index}.traj"  
-            print(f"Mode {i+1} animation (ASE .traj) saved to {traj_filename_generated}")  
-            ph.name = original_ph_name  
-  
-            xyz_filename = os.path.join(output_dir, f"softest_mode_{i+1}_{softest_mode_info['label']}_band{band_index}.xyz")  
-            try:  
-                  frames = read(traj_filename_generated, index=':')  
-                  write(xyz_filename, frames)  
-                  print(f"Converted trajectory to XYZ: {xyz_filename}")  
-            except Exception as e:  
-                  print(f"Error converting trajectory to XYZ for mode {i+1}: {e}")  
-                  import traceback  
-                  traceback.print_exc()  
-  
-         except Exception as e:  
-            print(f"Error retrieving displacements or writing trajectory for mode {i+1}: {e}")  
-            import traceback  
-            traceback.print_exc()  
-  
-   else:  
-      print("\nNo negative frequencies found at special points.")  
-  
-   # Return the list of softest mode info dictionaries  
+      # Save eigenvectors to JSON  
+      eigenvector_data = {  
+         "q_point": list(q_point),  
+         "band_idx": band_idx,  
+         "frequency": float(frequency),  
+         # Convert complex NumPy array to a list of lists of dictionaries for JSON serialization  
+         "eigenvectors": [[{"real": x.real, "imag": x.imag} for x in row] for row in raw_displacements]  
+      }  
+      eigenvector_filename = os.path.join(output_dir, f"{base_filename}_eigenvectors.json")  
+      with open(eigenvector_filename, "w") as f:  
+         json.dump(eigenvector_data, f, indent=4)  
+      print(f"  - Saved eigenvectors to {eigenvector_filename}")
+
+      # Save displacements to TXT
+      max_disp_magnitude = np.max(np.linalg.norm(np.real(raw_displacements), axis=1))
+      if max_disp_magnitude > 1e-6:
+         scaled_displacements_for_viz = np.real(raw_displacements) / max_disp_magnitude * 0.5
+      else:
+         scaled_displacements_for_viz = np.real(raw_displacements)
+
+      displacements_filename = os.path.join(output_dir, f"{base_filename}_displacements.txt")
+      with open(displacements_filename, 'w') as f:
+         f.write(f"Displacements for Q-point: {list(q_point)} (fractional coordinates)\n")
+         f.write(f"Mode Index: {band_idx}\n")
+         f.write(f"Frequency: {frequency:.4f} {units}\n\n")
+
+         f.write("--- Raw Complex Displacements (Eigenvectors) ---\n")
+         f.write("Atom Index | Element | Displacement (x, y, z) (complex values)\n")
+         f.write("------------------------------------------------------------------\n")
+         for i, (disp, symbol) in enumerate(zip(raw_displacements, ph.atoms.symbols)):
+               f.write(f"{i:<10} | {symbol:<7} | ({disp[0]:.6f}, {disp[1]:.6f}, {disp[2]:.6f})\n")
+         f.write("\n")
+
+         f.write("--- Scaled Real Displacements for Visualization ---\n")
+         f.write("(These are the real parts of the eigenvectors, scaled for visual clarity)\n")
+         f.write("Atom Index | Element | Displacement (x, y, z) (real values, scaled)\n")
+         f.write("------------------------------------------------------------------\n")
+         for i, (disp_scaled, symbol) in enumerate(zip(scaled_displacements_for_viz, ph.atoms.symbols)):
+               f.write(f"{i:<10} | {symbol:<7} | dx={disp_scaled[0]:.6f}, dy={disp_scaled[1]:.6f}, dz={disp_scaled[2]:.6f} Å\n")
+         f.write("\n")
+      print(f"  - Displacements saved to: {displacements_filename}")
+
+      # Generate trajectory
+      original_ph_name = ph.name # Save original name to restore later
+      ph.name = os.path.join(output_dir, base_filename)
+      ph.write_modes(
+         q_point,
+         branches=[band_idx],
+         kT=traj_kT,
+         repeat=(2, 2, 2),
+         center=True
+      )
+      traj_filename_generated = f"{ph.name}.mode.{band_idx}.traj"
+      print(f"  - Mode animation (ASE .traj) saved to {traj_filename_generated}")
+      ph.name = original_ph_name # Restore original name
+
+      # Convert trajectory to XYZ
+      xyz_filename = os.path.join(output_dir, f"{base_filename}.xyz")
+      try:
+         frames = read(traj_filename_generated, index=':')
+         write(xyz_filename, frames)
+         print(f"  - Converted trajectory to XYZ: {xyz_filename}")
+      except Exception as e:
+         print(f"  - Error converting trajectory to XYZ for {base_filename}: {e}")
+         import traceback
+         traceback.print_exc()
+
+   except Exception as e:
+      print(f"Error processing mode {base_filename}: {e}")
+      import traceback
+      traceback.print_exc()
+
+
+def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir, prefix, traj_kT=1, num_modes_to_return=2, target_q_point=None, target_band_idx=None):
+   """Analyzes frequencies at special points and identifies the softest modes.
+   Optionally, it can also process and save displacements for a specific q-point and mode.
+   Now also saves band structure and DOS data.
+
+   Args:
+      ph (ase.phonons.Phonons): The Phonons object.
+      bs (ase.spectrum.band_structure.BandStructure): The BandStructure object.
+      path (ase.dft.kpoints.BandPath): The BandPath object.
+      bs_energies (np.ndarray): The phonon band energies (frequencies).
+      special_k_point_distances (list): Distances of special k-points.
+      special_k_point_labels (list): Labels of special k-points.
+      units (str): Units for frequencies (e.g., "THz", "cm-1").
+      output_dir (str): Directory to save output files.
+      prefix (str): Prefix for output files.
+      traj_kT (float): Temperature for trajectory generation (default 0.1).
+      num_modes_to_return (int): The number of softest modes to return (default 2).
+      target_q_point (list or np.array, optional): A specific q-point for which to retrieve and save eigenvectors.
+                                                   If None, only special points are analyzed.
+      target_band_idx (int, optional): The index of the mode (0-indexed) for the target_q_point.
+                                       Required if target_q_point is provided.
+    """
+   print("\n--- Analyzing Special K-points ---")
+
+   special_point_analysis = []
+   all_negative_modes_info = [] # To store all negative modes found at special points
+   special_point_coords = path.special_points # Dictionary mapping label to coordinate
+
+   for label, distance in zip(special_k_point_labels, special_k_point_distances):
+      coord = special_point_coords.get(label)
+      if coord is None:
+         print(f"Warning: Could not find coordinate for special point label '{label}'. Skipping.")
+         continue
+
+      # Find the index in path.kpts that matches this coordinate
+      kpt_index = None
+      for i, kpt in enumerate(path.kpts):
+         if np.allclose(kpt, coord):
+               kpt_index = i
+               break
+
+      if kpt_index == None:
+         print(f"Warning: Could not find k-point index for coordinate {coord} (label '{label}'). Skipping.")
+         continue
+
+      # Get frequencies at this k-point index
+      freqs_at_kpt = bs_energies[kpt_index]
+
+      # Iterate through all bands at this k-point to find negative frequencies
+      for band_idx, freq in enumerate(freqs_at_kpt):
+         if freq < 0: # Only consider negative frequencies
+               mode_info = {
+                  "label": label,
+                  "coordinate": [float(c) for c in coord], # Convert numpy array to list for JSON
+                  "frequency": float(freq),
+                  "band_index": int(band_idx),
+                  "kpoint_index_in_path": int(kpt_index) # Store index in path.kpts
+               }
+               all_negative_modes_info.append(mode_info)
+
+      # Also add the minimum frequency at this k-point to special_point_analysis (even if positive)
+      min_freq_at_kpt = np.min(freqs_at_kpt)
+      min_band_index_at_kpt = np.argmin(freqs_at_kpt)
+      special_point_analysis.append({
+         "label": label,
+         "coordinate": [float(c) for c in coord],
+         "min_frequency": float(min_freq_at_kpt),
+         "band_index": int(min_band_index_at_kpt)
+      })
+      print(f"   Special Point: {label} ({coord[0]:.4f}, {coord[1]:.4f}, {coord[2]:.4f}) - Minimum Frequency: {min_freq_at_kpt:.4f} {units}")
+
+
+   # Sort all found negative modes by frequency (most negative first)
+   all_negative_modes_info.sort(key=lambda x: x['frequency'])
+
+   # Select the top N softest modes
+   top_n_softest_modes = []
+   processed_modes_keys = set() # To avoid duplicate modes (same k-point, same band)
+
+   for mode_info in all_negative_modes_info:
+      mode_key = (mode_info['kpoint_index_in_path'], mode_info['band_index'])
+      if mode_key not in processed_modes_keys:
+         top_n_softest_modes.append(mode_info)
+         processed_modes_keys.add(mode_key)
+         if len(top_n_softest_modes) >= num_modes_to_return:
+               break
+
+   # Save special point analysis (this includes all special points, not just negative modes)
+   analysis_filename = os.path.join(output_dir, "special_point_analysis.json")
+   with open(analysis_filename, 'w') as f:
+      json.dump(special_point_analysis, f, indent=4)
+   print(f"\nSpecial point analysis saved to {analysis_filename}")
+
+   # Report and get displacements for the top N softest modes
+   all_soft_modes_with_displacements = []
+   if top_n_softest_modes:
+      print(f"\n--- Top {len(top_n_softest_modes)} Softest Modes Analysis ---")
+      for i, softest_mode_info in enumerate(top_n_softest_modes):
+         raw_displacements = get_eigenvector_for_q_and_band_index(  
+             ph,  
+             np.array(softest_mode_info['coordinate']),  
+             softest_mode_info['band_index']  
+         )
+         if raw_displacements is not None:  
+            # Add raw_displacements to the mode_info dictionary  
+            softest_mode_info['raw_displacements'] = raw_displacements.tolist()
+         # Call the helper function for each softest mode
+         _process_and_save_mode_data(
+               ph=ph,
+               q_point=np.array(softest_mode_info['coordinate']),
+               band_idx=softest_mode_info['band_index'],
+               frequency=softest_mode_info['frequency'],
+               units=units,
+               output_dir=output_dir,
+               traj_kT=traj_kT,
+               prefix=f"softest_mode_{i+1}_{softest_mode_info['label']}"
+         )
+         # You might want to append the processed info to all_soft_modes_with_displacements
+         # if you need to return it, but the helper function handles saving.
+         # For now, we'll just add the basic info back.
+         all_soft_modes_with_displacements.append(softest_mode_info)
+   else:
+      print("\nNo negative frequencies found at special points.")
+
+   # --- Handle specific target q-point and mode if provided ---
+   if target_q_point is not None and target_band_idx is not None:
+      print(f"\n--- Processing Specific Target Mode ---")
+      try:
+         # Get frequency of the target mode
+         omega_at_q, _ = ph.band_structure([target_q_point], modes=True)
+         freq_at_mode = omega_at_q[0, target_band_idx]
+
+         # Call the helper function for the target mode
+         _process_and_save_mode_data(
+               ph=ph,
+               q_point=np.array(target_q_point),
+               band_idx=target_band_idx,
+               frequency=freq_at_mode,
+               units=units,
+               output_dir=output_dir,
+               traj_kT=traj_kT,
+               prefix="target_mode" # A generic prefix for the target mode
+         )
+         generate_and_visualize_specific_mode_supercell(
+            ph.atoms, # This is the primitive cell (potentially relaxed)
+            ph,
+            np.array(target_q_point),
+            target_band_idx,
+            1,
+            output_dir,
+            prefix
+        )
+      except Exception as e:
+         print(f"Error processing target q-point {target_q_point}, mode {target_band_idx}: {e}")
+         import traceback
+         traceback.print_exc()
+   
+   # Return the list of softest mode info dictionaries
    return all_soft_modes_with_displacements
+
+
+def generate_and_visualize_specific_mode_supercell(primitive_atoms, ph_obj, q_point, band_idx, displacement_magnitude, output_base_dir, original_prefix):
+   """
+   Generates a single displaced supercell for a specific q-point and mode,
+   and visualizes the mode.
+
+   Args:
+      primitive_atoms (ase.atoms.Atoms): The primitive cell structure (potentially relaxed).
+      ph_obj (ase.phonons.Phonons): The Phonons object from the calculation.
+      q_point (np.array): The q-point in fractional reciprocal coordinates.
+      band_idx (int): The index of the mode (0-indexed).
+      displacement_magnitude (float): The desired magnitude of displacement in Angstroms.
+      output_base_dir (str): The main output directory.
+      original_prefix (str): The base filename prefix of the original structure.
+
+   Returns:
+      ase.atoms.Atoms: The generated displaced supercell atoms object, or None if generation fails.
+   """
+   print(f"\n--- Generating and Visualizing Displaced Supercell for Mode {band_idx} at q={q_point} ---")
+
+   # 1. Get the raw eigenvector for the specified q-point and mode
+   raw_displacements_primitive = get_eigenvector_for_q_and_band_index(ph_obj, q_point, band_idx)
+   if raw_displacements_primitive is None:
+      print("Failed to retrieve eigenvector. Exiting mode generation.")
+      return None # Return None on failure
+
+   # Normalize the eigenvector to get unit displacement vectors
+   max_raw_disp_magnitude = np.max(np.linalg.norm(np.real(raw_displacements_primitive), axis=1))
+   if max_raw_disp_magnitude < 1e-6:
+      print("Warning: Eigenvector displacements are zero or very small. Cannot generate meaningful displacement.")
+      normalized_displacements_primitive = raw_displacements_primitive # Keep as is if zero
+   else:
+      normalized_displacements_primitive = raw_displacements_primitive / max_raw_disp_magnitude
+
+   # 2. Estimate commensurate supercell size
+   supercell_dims = estimate_commensurate_supercell_size(q_point)
+   sc_n1, sc_n2, sc_n3 = supercell_dims
+   supercell_matrix = np.diag(np.array(supercell_dims))
+
+   # Create a dedicated output directory for this specific mode generation
+   q_point_str = "_".join([f"{c:.3f}" for c in q_point]).replace('.', 'p').replace('-', 'm') # For filename safety
+   mode_gen_output_dir = os.path.join(output_base_dir, f"mode_gen_q_{q_point_str}_mode_{band_idx}_disp_{displacement_magnitude:.3f}")
+   os.makedirs(mode_gen_output_dir, exist_ok=True)
+   print(f"Output directory for mode generation: {mode_gen_output_dir}")
+
+   # 3. Generate the supercell from the primitive cell
+   # make_supercell with wrap=False to get unwrapped positions for phase factor application
+   supercell_atoms_unwrapped = make_supercell(primitive_atoms, supercell_matrix, wrap=False)
+
+   # Manually determine atom_map and cell_shifts_primitive_units for the supercell atoms
+   num_atoms_supercell = len(supercell_atoms_unwrapped)
+   atom_map = np.zeros(num_atoms_supercell, dtype=int)
+   cell_shifts_primitive_units = np.zeros((num_atoms_supercell, 3), dtype=int)
+
+   primitive_positions = primitive_atoms.get_positions()
+   primitive_cell_inv = np.linalg.inv(primitive_atoms.get_cell())
+
+   for i_sc in range(num_atoms_supercell):
+      pos_sc_unwrapped = supercell_atoms_unwrapped.get_positions()[i_sc]
+      frac_pos_in_primitive_basis = np.dot(pos_sc_unwrapped, primitive_cell_inv)
+
+      min_dist = float('inf')
+      best_prim_idx = -1
+      for j_prim in range(len(primitive_atoms)):
+         prim_frac_pos = np.dot(primitive_positions[j_prim], primitive_cell_inv)
+         diff_frac = frac_pos_in_primitive_basis - prim_frac_pos
+         diff_frac_wrapped = diff_frac - np.round(diff_frac)
+         dist = np.linalg.norm(diff_frac_wrapped)
+         if dist < min_dist:
+               min_dist = dist
+               best_prim_idx = j_prim
+
+      atom_map[i_sc] = best_prim_idx
+      prim_frac_pos_of_matched_atom = np.dot(primitive_positions[best_prim_idx], primitive_cell_inv)
+      cell_shifts_primitive_units[i_sc] = np.round(frac_pos_in_primitive_basis - prim_frac_pos_of_matched_atom).astype(int)
+
+   # Now, wrap the supercell atoms for actual structure representation (base for animation)
+   supercell_atoms_base = supercell_atoms_unwrapped.copy()
+   supercell_atoms_base.wrap(pbc=True)
+
+   # 4. Apply displacements with phase factors to create the *single* displaced structure
+   displaced_supercell_atoms = supercell_atoms_unwrapped.copy() # Start with unwrapped supercell for displacement application
+   total_displacements_supercell_complex = np.zeros_like(supercell_atoms_unwrapped.get_positions(), dtype=complex)
+
+   for i_sc in range(num_atoms_supercell):
+      prim_idx = atom_map[i_sc]
+      cell_shift_primitive_units_i_sc = cell_shifts_primitive_units[i_sc]
+
+      # Calculate phase factor
+      dot_product = np.dot(q_point, cell_shift_primitive_units_i_sc)
+      phase_factor = np.exp(1j * 2 * np.pi * dot_product)
+
+      # Apply scaled and phased displacement
+      disp_vector_complex = normalized_displacements_primitive[prim_idx] * displacement_magnitude * phase_factor
+      total_displacements_supercell_complex[i_sc] = disp_vector_complex
+
+   # Apply the real part of the total displacements to get the final displaced structure
+   displaced_supercell_atoms.set_positions(displaced_supercell_atoms.get_positions() + np.real(total_displacements_supercell_complex))
+   displaced_supercell_atoms.wrap(pbc=True) # Wrap the final displaced positions
+
+   # 5. Save the displaced supercell
+   filename_base = f"{original_prefix}_q_{q_point_str}_mode_{band_idx}_disp_{displacement_magnitude:.3f}_sc_{sc_n1}x{sc_n2}x{sc_n3}"
+   cif_path = os.path.join(mode_gen_output_dir, f"{filename_base}.cif")
+   xyz_path = os.path.join(mode_gen_output_dir, f"{filename_base}.xyz")
+
+   write(cif_path, displaced_supercell_atoms)
+   write(xyz_path, displaced_supercell_atoms)
+   print(f"Generated displaced supercell: {cif_path} and {xyz_path}")
+
+   # 6. Generate visualization (trajectory) for the mode in the supercell
+   # Create a trajectory of the oscillation around the *undisplaced* supercell
+   num_frames = 200 # Number of frames for the animation
+   traj_frames = []
+   for i in range(num_frames):
+      phase = 2 * np.pi * i / num_frames
+      # Apply displacement with phase to the original supercell (supercell_atoms_base)
+      current_frame_atoms = supercell_atoms_base.copy()
+      # Lets remove the displacement factor, I want the animation with a smaller displacement
+      displacements_for_animation = total_displacements_supercell_complex / displacement_magnitude
+      # Calculate instantaneous displacement for this phase
+      instantaneous_displacements = np.real(displacements_for_animation * np.exp(1j * phase))
+      current_frame_atoms.set_positions(current_frame_atoms.get_positions() + instantaneous_displacements)
+      current_frame_atoms.wrap(pbc=True)
+      traj_frames.append(current_frame_atoms)
+
+   traj_filename = os.path.join(mode_gen_output_dir, f"{filename_base}_mode_animation.traj")
+   xyz_animation_filename = os.path.join(mode_gen_output_dir, f"{filename_base}_mode_animation.xyz")
+
+   write(traj_filename, traj_frames)
+   write(xyz_animation_filename, traj_frames)
+   print(f"Generated mode animation trajectory: {traj_filename} and {xyz_animation_filename}")
+
+   # Optional: Open visualization (requires GUI, might not work in all environments)
+   # try:
+   #     print("\nAttempting to open ASE viewer for mode animation (requires GUI environment)...")
+   #     view(traj_frames)
+   #     print("ASE viewer opened. Close the viewer to continue.")
+   # except Exception as e:
+   #     print(f"Could not open ASE viewer: {e}. Ensure X server is running and ASE GUI dependencies are installed.")
+   print("You can view the generated .traj and .xyz files using external visualization tools.")
+
+   print("\n--- Specific Mode Supercell Generation and Visualization Complete ---")
+   return displaced_supercell_atoms # Return the generated displaced supercell

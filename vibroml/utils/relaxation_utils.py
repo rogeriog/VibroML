@@ -265,7 +265,7 @@ def relax_structures_in_folder(folder_path: str, calculator: Calculator, engine:
                  # Add symmetry info to the summary_f for this specific structure  
                  summary_f.write("\n  --- Relaxed Structure Symmetry Analysis ---\n")  
                  if best_dataset_for_relaxed:  
-                     summary_f.write(f"  Symmetry Precision (Auto-tuned): {best_dataset_for_relaxed.get('symprec_found', 'N/A')}\n") # Assuming symprec_found is added to dataset  
+                     summary_f.write(f"  Symmetry Precision (Auto-tuned): {best_dataset_for_relaxed.get('symprec_found', 'N/A')}\n") 
                      summary_f.write(f"  Space Group Number: {best_dataset_for_relaxed['number']}\n")  
                      summary_f.write(f"  International Symbol: {best_dataset_for_relaxed['international']}\n")  
                      summary_f.write(f"  Hall Symbol: {best_dataset_for_relaxed['hall']}\n")  
@@ -411,7 +411,7 @@ def analyze_symmetry(atoms, output_dir, prefix="", symprec=1e-3, auto_tune_sympr
     print("---------------------------------------")
 
     crystal_system = "N/A"
-    if best_dataset and best_symprec is not None: # Added check for best_symprec
+    if best_dataset and best_symprec is not None: 
         try:
             pmg_structure = AseAtomsAdaptor().get_structure(atoms)
             sga = SpacegroupAnalyzer(pmg_structure, symprec=best_symprec)
@@ -504,7 +504,7 @@ def create_displaced_supercell_summary(mode_folder_path: str):
                     else:  
                         print("DEBUG: Number_of_atoms regex failed to match.")  
   
-                    match = re.search(r"Final Energy per Atom: (.*)", block_content)
+                    match = re.search(r"Final Energy per Atom: ([-+]?\d*\.\d+)", block_content)
                     if match:
                         val = match.group(1).strip()
                         if "FAIL" in val or "N/A" in val:
