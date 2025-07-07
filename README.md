@@ -1,13 +1,8 @@
-
 ### VibroML
 <div align="center">  
   <img src="logo/VibroML.png" alt="VibroML Logo" width="300px" height="150px">
 </div>
-<<<<<<< HEAD
 AI-Powered Vibrational Analysis & Stability Suite
-=======
-<h3 align="center">AI-Powered Vibrational Analysis & Stability Suite</h3>
->>>>>>> 0f84048886bbbf4b58e8473bc63843e9a16bebee
 
 [![PyPI Version](https://img.shields.io/pypi/v/vibroml.svg)](https://pypi.org/project/vibroml/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -29,9 +24,9 @@ VibroML provides an end-to-end workflow to:
 VibroML offers several specialized modes to suit different analysis needs:
 
 *   **Phonon-Only Mode:** Quickly compute phonon band structures and DOS, with detailed reporting of imaginary modes. Ideal for initial stability checks.
-*   **Auto-Screen Mode:** An intelligent, automated pipeline to detect unstable modes, displace atoms along them, re-optimize the structure, and iteratively stabilize it. This mode includes a parameter sweep to find optimal calculation settings and is now enhanced with a Genetic Algorithm for exploring stable configurations.
-*   **Soft-Mode Iterative Optimization:** A dedicated workflow to systematically explore stable configurations by displacing along soft modes and relaxing, iterating until stability is achieved or limits are reached.
-*   **Genetic Algorithm (GA) Driven Optimization:** Integrates a Genetic Algorithm to intelligently explore the potential energy surface, generating and relaxing new structures based on the most promising candidates from previous iterations, significantly enhancing the search for stable phases.
+*   **Auto-Screen Mode:** An intelligent, automated pipeline to detect unstable modes, displace atoms along them, re-optimize the structure, and iteratively stabilize it. This mode includes a parameter sweep to find optimal calculation settings and can now trigger either a Traditional or Genetic Algorithm-driven soft mode optimization.
+*   **Soft-Mode Iterative Optimization (Traditional):** A dedicated workflow to systematically explore stable configurations by displacing along soft modes and relaxing, iterating until stability is achieved or limits are reached. This method uses a predefined grid of displacement scales and cell transformations.
+*   **Genetic Algorithm (GA) Driven Optimization:** Integrates a Genetic Algorithm to intelligently explore the potential energy surface, generating and relaxing new structures based on the most promising candidates from previous iterations, significantly enhancing the search for stable phases. This method is recommended for more complex searches.
 *   **AIMD-Check Mode:** (Planned) Run short MLIP-based molecular dynamics simulations to provide dynamic stability metrics.
 *   **Command-Line Interface (CLI):** Simple and intuitive CLI for high-throughput screening and integration into automated workflows.
 
@@ -93,14 +88,14 @@ vibroml --cif examples/another_material.cif --engine m3gnet --supercell_n 4 --de
 
 #### 2. Auto-Screen Mode
 
-This mode automates the search for stable phases. It performs a parameter sweep over supercell sizes, displacement deltas, and force tolerances to find the best settings that minimize negative imaginary phonons. If a soft mode persists after the sweep, it automatically triggers an iterative soft mode displacement and relaxation workflow, now enhanced with a Genetic Algorithm.
+This mode automates the search for stable phases. It performs a parameter sweep over supercell sizes, displacement deltas, and force tolerances to find the best settings that minimize negative imaginary phonons. If a soft mode persists after the sweep, it automatically triggers an iterative soft mode displacement and relaxation workflow, which can be either Traditional or GA-driven.
 
 ```bash
-# Run auto-screen with MACE
+# Run auto-screen with MACE, using the default GA method for soft mode optimization
 vibroml --cif examples/unstable_material.cif --engine mace --auto
 
-# Run auto-screen with M3GNet, allowing initial relaxation
-vibroml --cif examples/another_unstable.cif --engine m3gnet --auto --fmax 0.0005
+# Run auto-screen with M3GNet, allowing initial relaxation, using the traditional method
+vibroml --cif examples/another_unstable.cif --engine m3gnet --auto --fmax 0.0005 --method traditional
 ```
 
 **Output:**
@@ -113,8 +108,8 @@ In addition to the phonon-only mode outputs for each tested configuration, this 
     *   `*_d*.cif` and `*_d*.xyz`: Displaced supercell structures.
     *   `relaxation_summary.txt`: Summary of relaxation for all displaced structures in that folder.
     *   `soft_mode_iter_*_top_structure_*_phonon_analysis/`: Phonon analysis results for the top lowest-energy relaxed structures from that iteration, including their primitive cell CIFs.
-    *   `relaxation_summary_iter.txt`: A summary of relaxation results for the current GA iteration.
-*   `overall_relaxation_summary.txt`: A consolidated summary of relaxation results across all GA iterations, sorted by energy.
+    *   `relaxation_summary_iter.txt`: A summary of relaxation results for the current iteration.
+*   `overall_relaxation_summary.txt`: A consolidated summary of relaxation results across all iterations, sorted by energy.
 
 #### 3. AIMD-Check Mode
 
@@ -133,6 +128,10 @@ Use `vibroml --help` to see all available commands and options.
 # General help
 vibroml --help
 
+# Example of running soft mode optimization directly (without auto-screen)
+# If a soft mode is detected in the initial phonon run, it will trigger the specified method.
+vibroml --cif examples/unstable_material.cif --engine mace --run-soft-mode-after-single --method ga
+vibroml --cif examples/unstable_material.cif --engine mace --run-soft-mode-after-single --method traditional
 ```
 
 ### Package Structure
@@ -141,7 +140,7 @@ vibroml --help
 vibroml/
 ├── __init__.py
 ├── main.py                 # Main CLI entry point
-├── auto_optimize.py        # Logic for auto-screening and soft mode optimization
+├── auto_optimize.py        # Logic for auto-screening and soft mode optimization (GA and Traditional)
 └── utils/
     ├── __init__.py
     ├── config.py           # Configuration constants (e.g., unit conversion factors)
@@ -149,7 +148,7 @@ vibroml/
     ├── phonon_utils.py     # Functions for phonon calculations, results processing, and soft mode analysis
     ├── plotting_utils.py   # Functions for generating phonon plots
     ├── relaxation_utils.py # Functions for structure relaxation and symmetry analysis
-    └── structure_utils.py  # Functions for loading structures, initializing calculators, and generating displaced supercells
+    ├── structure_utils.py  # Functions for loading structures, initializing calculators, and generating displaced supercells
     └── utils.py            # General utility functions (e.g., cache cleaning, MACE device detection)
 ```
 
@@ -164,5 +163,4 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for full 
 ### Citation
 
 If you use VibroML in your work, please cite:
-
 

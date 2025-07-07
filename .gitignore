@@ -20,5 +20,6 @@ wheels/
 .installed.cfg
 *.egg
 
+examples/
 get_full_package_context.py
 vibroml_full_package_context.txt
