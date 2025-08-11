@@ -3,8 +3,8 @@
     "default_model_name": "medium-omat-0",
     "default_fmax": 0.001,
     "default_delta": 0.03,
-    "default_supercell_n": 3,
-    "screen_supercell_ns": [2, 3, 4],
+    "default_supercell_n": [3, 3, 3],
+    "screen_supercell_ns": [[2, 2, 2], [3, 3, 3], [4, 4, 4]],
     "screen_deltas": [0.05, 0.03, 0.01],
     "screen_fmax_values": [0.001, 0.0005, 0.0001],
     "phonon_path_npoints": 100,
@@ -18,7 +18,8 @@
     "cell_scale_factors": [ -0.07, 0.0, 0.07],
     "mode2_ratio_scales": [ -0.25, 0.0, 0.25], 
     "num_modes_to_return": 2,
-    "num_new_points_per_iteration": 30,
-    "ga_population_size": 80,
-    "ga_mutation_rate": 0.2
+    "num_new_points_per_iteration": 50,
+    "ga_population_size": 100,
+    "ga_mutation_rate": 0.2,
+    "default_method": "ga"
 }
