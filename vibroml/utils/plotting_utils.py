@@ -13,7 +13,7 @@ def plot_phonon_results(
    y_label,
    struct_formula,
    cif_filename_base,
-   supercell_n,
+   supercell_dims, 
    delta,
    fmax,
    output_dir
@@ -86,21 +86,23 @@ def plot_phonon_results(
    dos_ax.set_xlabel("DOS", fontsize=14)
 
    # Title
-   fig.suptitle(
-      f"Phonon band structure and DOS of {struct_formula} "
-      f"({cif_filename_base}) with ({supercell_n}, {supercell_n}, {supercell_n}) supercell",
-      fontsize=12,
-      y=1.02,
-   )
+   supercell_str_title = f"({supercell_dims[0]}x{supercell_dims[1]}x{supercell_dims[2]})" if isinstance(supercell_dims, (list, tuple)) else f"({supercell_dims}x{supercell_dims}x{supercell_dims})"  
+   supercell_str_filename = f"{supercell_dims[0]}x{supercell_dims[1]}x{supercell_dims[2]}" if isinstance(supercell_dims, (list, tuple)) else f"{supercell_dims}"  
 
-   # Save files
-   png_path = os.path.join(
-      output_dir,
-      f"phonon_bs_dos_{cif_filename_base}_N{supercell_n}_D{delta}_F{fmax}.png"
-   )
-   svg_path = os.path.join(
-      output_dir,
-      f"phonon_bs_dos_{cif_filename_base}_N{supercell_n}_D{delta}_F{fmax}.svg"
+   fig.suptitle(  
+   f"Phonon band structure and DOS of {struct_formula} "  
+   f"({cif_filename_base}) with {supercell_str_title} supercell",  
+   fontsize=12,  
+   y=1.02,  
+   )  
+
+   png_path = os.path.join(  
+   output_dir,  
+   f"phonon_bs_dos_{cif_filename_base}_N{supercell_str_filename}_D{delta}_F{fmax}.png"  
+   )  
+   svg_path = os.path.join(  
+   output_dir,  
+   f"phonon_bs_dos_{cif_filename_base}_N{supercell_str_filename}_D{delta}_F{fmax}.svg"  
    )
    plt.savefig(png_path, dpi=300, bbox_inches="tight")
    plt.savefig(svg_path, bbox_inches="tight")

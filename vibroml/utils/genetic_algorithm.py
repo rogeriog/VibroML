@@ -11,10 +11,11 @@ class GeneticAlgorithm:
                  ratio_mode2_to_mode1_bounds,
                  cell_scale_bounds,
                  cell_angle_bounds,
-                 supercell_variants, # List of possible supercell tuples, e.g., [(2,2,2), (3,2,1)]
+                 supercell_variants, 
+                 phase_factor_off_ratio=0.5,
                  num_offspring=30,
                  selection_strategy='tournament',
-                 tournament_size=3
+                 tournament_size=10
                 ):
         """
         Initializes the Genetic Algorithm.
@@ -29,7 +30,7 @@ class GeneticAlgorithm:
         self.num_offspring = num_offspring
         self.selection_strategy = selection_strategy
         self.tournament_size = tournament_size
-
+        self.phase_factor_off_ratio = phase_factor_off_ratio
         # The population will be a list of dictionaries:
         # [{'params': (disp_scale, ratio, cell_transform_vec, supercell_variant), 'fitness': energy}, ...]
         self.population = []
@@ -44,8 +45,9 @@ class GeneticAlgorithm:
         
         # Pick a random supercell variant from the provided list
         supercell_variant = random.choice(self.supercell_variants)
-        
-        return (disp_scale, ratio, cell_transformation_vector, supercell_variant)
+        use_phase_factor = random.choices([True, False], weights=[1-self.phase_factor_off_ratio, self.phase_factor_off_ratio])[0]
+
+        return (disp_scale, ratio, cell_transformation_vector, supercell_variant, use_phase_factor)
 
     def initialize_population(self, initial_individuals=None):
         """
@@ -65,42 +67,75 @@ class GeneticAlgorithm:
 
         print(f"Initialized GA population with {len(self.population)} individuals.")
 
-    def _select_parents(self):
-        """Selects two parents from the current population based on the selection strategy."""
-        if not self.population or all(ind['fitness'] is None for ind in self.population):
-            raise ValueError("Population is empty or no fitness values available for selection.")
-
-        eligible_population = [ind for ind in self.population if ind['fitness'] is not None]
-        if not eligible_population:
-            print("Warning: No individuals with valid fitness for selection. Selecting randomly.")
-            return random.sample(self.population, 2)
-
-        if self.selection_strategy == 'tournament':
-            def tournament_selection():
-                contenders = random.sample(eligible_population, min(self.tournament_size, len(eligible_population)))
-                return min(contenders, key=lambda x: x['fitness'])
-
-            parent1 = tournament_selection()
-            parent2 = tournament_selection()
-            while parent1 == parent2 and len(eligible_population) > 1:
-                parent2 = tournament_selection()
-            return parent1['params'], parent2['params']
-
-        elif self.selection_strategy == 'roulette':
-            fitness_values = [ind['fitness'] for ind in eligible_population]
-            max_energy = max(fitness_values)
-            scores = [max_energy - f + 1e-6 for f in fitness_values]
-            total_score = sum(scores)
-            if total_score == 0:
-                print("Warning: All fitness scores are effectively zero. Selecting randomly.")
-                p1, p2 = random.sample(eligible_population, 2)
-                return p1['params'], p2['params']
-
-            probabilities = [s / total_score for s in scores]
-            parent_indices = np.random.choice(len(eligible_population), size=2, p=probabilities, replace=True)
-            return eligible_population[parent_indices[0]]['params'], eligible_population[parent_indices[1]]['params']
-
-        else:
+    def _select_parents(self):  
+        """Selects two parents from the current population based on the selection strategy."""  
+        eligible_population = [ind for ind in self.population if ind['fitness'] is not None]  
+  
+        if not eligible_population:  
+            # If no individuals have valid fitness, we cannot select based on fitness.  
+            # This should ideally not happen if initialize_population is called correctly  
+            # and fitness is evaluated for at least some individuals.  
+            # Fallback: Generate random individuals if no valid population to select from.  
+            print("Warning: No individuals with valid fitness for selection. Generating random parents.")  
+            return self._generate_random_individual(), self._generate_random_individual()  
+  
+        if len(eligible_population) < 2:  
+            # If there's only one or zero eligible individuals, we can't pick two distinct parents.  
+            # In this case, we might pick the same parent twice, or generate a random one.  
+            print(f"Warning: Only {len(eligible_population)} individual(s) with valid fitness. Parent selection might be limited.")  
+            if len(eligible_population) == 1:  
+                # If only one, pick it twice  
+                return eligible_population[0]['params'], eligible_population[0]['params']  
+            else: # len == 0, handled above  
+                return self._generate_random_individual(), self._generate_random_individual()  
+  
+  
+        if self.selection_strategy == 'tournament':  
+            def tournament_selection_single():  
+                # Ensure tournament_size doesn't exceed eligible_population size  
+                current_tournament_size = min(self.tournament_size, len(eligible_population))  
+                if current_tournament_size == 0: # Should not happen due to checks above  
+                    raise ValueError("Cannot perform tournament selection with no eligible individuals.")  
+                  
+                contenders = random.sample(eligible_population, current_tournament_size)  
+                return min(contenders, key=lambda x: x['fitness'])  
+  
+            parent1_obj = tournament_selection_single()  
+            parent2_obj = tournament_selection_single()  
+  
+            # Ensure parent2 is different from parent1 if possible  
+            # This loop ensures we get two *different* individuals (objects) if the population allows.  
+            # If eligible_population has only one unique object, this loop will eventually break.  
+            attempts = 0  
+            max_attempts = 10 # Prevent infinite loop for very small populations  
+            while parent1_obj == parent2_obj and len(eligible_population) > 1 and attempts < max_attempts:  
+                parent2_obj = tournament_selection_single()  
+                attempts += 1  
+              
+            # If after max_attempts, they are still the same, and population > 1,  
+            # it means tournament_selection_single is consistently picking the same object.  
+            # This is unlikely with random.sample unless eligible_population is tiny.  
+            # In such a case, it's acceptable to proceed with identical parents.  
+  
+            return parent1_obj['params'], parent2_obj['params']  
+  
+        elif self.selection_strategy == 'roulette':  
+            # ... (your existing roulette code, which seems fine) ...  
+            fitness_values = [ind['fitness'] for ind in eligible_population]  
+            max_energy = max(fitness_values)  
+            scores = [max_energy - f + 1e-6 for f in fitness_values]  
+            total_score = sum(scores)  
+            if total_score == 0:  
+                print("Warning: All fitness scores are effectively zero. Selecting randomly.")  
+                p1, p2 = random.sample(eligible_population, 2)  
+                return p1['params'], p2['params']  
+  
+            probabilities = [s / total_score for s in scores]  
+            # Ensure replace=True for small populations, as we might pick the same parent twice  
+            parent_indices = np.random.choice(len(eligible_population), size=2, p=probabilities, replace=True)  
+            return eligible_population[parent_indices[0]]['params'], eligible_population[parent_indices[1]]['params']  
+  
+        else:  
             raise ValueError(f"Unknown selection strategy: {self.selection_strategy}")
 
     def _crossover(self, parent1_params, parent2_params):
@@ -121,16 +156,20 @@ class GeneticAlgorithm:
         child1_sc = random.choice([parent1_params[3], parent2_params[3]])
         child2_sc = random.choice([parent1_params[3], parent2_params[3]])
         
+        # 3. Crossover for the use_phase_factor gene (boolean)  
+        child1_pf = random.choice([parent1_params[4], parent2_params[4]])  
+        child2_pf = random.choice([parent1_params[4], parent2_params[4]])
+
         # 3. Reconstruct the full parameter tuples for the children
-        child1_params = (child1_numeric_list[0], child1_numeric_list[1], tuple(child1_numeric_list[2:]), child1_sc)
-        child2_params = (child2_numeric_list[0], child2_numeric_list[1], tuple(child2_numeric_list[2:]), child2_sc)
+        child1_params = (child1_numeric_list[0], child1_numeric_list[1], tuple(child1_numeric_list[2:]), child1_sc, child1_pf)
+        child2_params = (child2_numeric_list[0], child2_numeric_list[1], tuple(child2_numeric_list[2:]), child2_sc, child2_pf)
         
         return child1_params, child2_params
 
     def _mutate(self, individual_params):
         """Mutates numerical and categorical genes of an individual."""
         # individual_params = (disp_scale, ratio, cell_transform_vec, supercell_variant)
-        disp_scale, ratio, cell_transform_vec, supercell_variant = individual_params
+        disp_scale, ratio, cell_transform_vec, supercell_variant, use_phase_factor = individual_params
         
         # 1. Mutate numerical parts
         mutated_numeric_list = [disp_scale, ratio] + list(cell_transform_vec)
@@ -154,8 +193,13 @@ class GeneticAlgorithm:
             possible_new_variants = [sc for sc in self.supercell_variants if sc != supercell_variant]
             if possible_new_variants:
                 mutated_supercell_variant = random.choice(possible_new_variants)
-                
-        return (mutated_disp_scale, mutated_ratio, mutated_cell_transform_vec, mutated_supercell_variant)
+
+        # 3. Mutate the use_phase_factor gene  
+        mutated_use_phase_factor = use_phase_factor  
+        if random.random() < self.mutation_rate:  
+            mutated_use_phase_factor = not use_phase_factor # Flip the boolean value
+
+        return (mutated_disp_scale, mutated_ratio, mutated_cell_transform_vec, mutated_supercell_variant, mutated_use_phase_factor)
 
     def evolve(self, current_population_with_fitness):
         """Evolves the population for one generation."""

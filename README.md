@@ -69,6 +69,12 @@ This mode performs a single phonon calculation on your structure. It will relax 
 vibroml --cif examples/your_material.cif --engine mace --no-relax
 
 # Run with M3GNet, using a 4x4x4 supercell and custom displacement
+vibroml --cif examples/another_material.cif --engine m3gnet --supercell "4" --delta 0.02 --units cm-1
+
+# NEW: Use explicit supercell dimensions for anisotropic materials
+vibroml --cif layered_material.cif --supercell "2,2,8" --engine mace --delta 0.01 --units THz
+
+# Backward compatibility: old format still works
 vibroml --cif examples/another_material.cif --engine m3gnet --supercell_n 4 --delta 0.02 --units cm-1
 ```
 
