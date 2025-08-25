@@ -161,6 +161,7 @@ def run_phonon_calculation_sweep_optimization(args, output_dir, initial_atoms, c
             phonon_dos_grid=phonon_dos_grid,
             traj_kT=default_traj_kT,
             num_modes_to_return=num_modes_to_return,
+            negative_phonon_threshold=negative_phonon_threshold_thz
         )
 
         if neg_freq_at_special_point is not None:
@@ -564,14 +565,15 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             write(conventional_cif_path, conventional_atoms_for_next_iter)  
             print(f"Saved conventional structure for guidance phonon check to: {conventional_cif_path}")
 
-            next_softest_modes_info_list, _, _ = run_single_phonon_analysis(  
-                primitive_atoms_for_next_iter.copy(), calculator, args.engine, args.units,  
-                args.supercell_dims, args.delta, args.fmax, check_dir, # FIX: Use the parsed dimensions  
+            next_softest_modes_info_list, _, _ = run_single_phonon_analysis(
+                primitive_atoms_for_next_iter.copy(), calculator, args.engine, args.units,
+                args.supercell_dims, args.delta, args.fmax, check_dir, # FIX: Use the parsed dimensions
                 prefix=f"guidance_check_main_iter_{main_iteration_idx}",
                 phonon_path_npoints=phonon_path_npoints,
                 phonon_dos_grid=phonon_dos_grid,
                 traj_kT=default_traj_kT,
-                num_modes_to_return=num_modes_to_return
+                num_modes_to_return=num_modes_to_return,
+                negative_phonon_threshold=negative_phonon_threshold_thz
             )
             # Update the guiding atoms and soft mode list for the next loop
             current_primitive_atoms = primitive_atoms_for_next_iter.copy()
@@ -701,8 +703,10 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 phonon_path_npoints=phonon_path_npoints,
                 phonon_dos_grid=phonon_dos_grid,
                 traj_kT=default_traj_kT,
-                num_modes_to_return=num_modes_to_return
-            )  
+                num_modes_to_return=num_modes_to_return,
+                final_structures_dir=final_structure_dir,
+                negative_phonon_threshold=negative_phonon_threshold_thz
+            )
         except Exception as e:  
             print(f"  Error during final phonon analysis for top structure {i+1}: {e}")  
             import traceback  
@@ -732,8 +736,10 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                     phonon_path_npoints=phonon_path_npoints,
                     phonon_dos_grid=phonon_dos_grid,
                     traj_kT=default_traj_kT,
-                    num_modes_to_return=num_modes_to_return
-                )  
+                    num_modes_to_return=num_modes_to_return,
+                    final_structures_dir=final_structure_dir,
+                    negative_phonon_threshold=negative_phonon_threshold_thz
+                )
             except Exception as e:  
                 print(f"  Error during final phonon analysis for unique structure {i+1}: {e}")  
                 import traceback  
@@ -973,7 +979,8 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                 phonon_path_npoints=phonon_path_npoints,
                 phonon_dos_grid=phonon_dos_grid,
                 traj_kT=default_traj_kT,
-                num_modes_to_return=num_modes_to_return
+                num_modes_to_return=num_modes_to_return,
+                negative_phonon_threshold=negative_phonon_threshold_thz
             )
             current_primitive_atoms = primitive_atoms_for_next_iter.copy()
             softest_modes_info_list = next_softest_modes_info_list
@@ -1081,8 +1088,10 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                 phonon_path_npoints=phonon_path_npoints,
                 phonon_dos_grid=phonon_dos_grid,
                 traj_kT=default_traj_kT,
-                num_modes_to_return=num_modes_to_return
-            )  
+                num_modes_to_return=num_modes_to_return,
+                final_structures_dir=final_structure_dir,
+                negative_phonon_threshold=negative_phonon_threshold_thz
+            )
         except Exception as e:  
             print(f"  Error during final phonon analysis for top structure {i+1}: {e}")  
             import traceback  
@@ -1112,8 +1121,10 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                     phonon_path_npoints=phonon_path_npoints,
                     phonon_dos_grid=phonon_dos_grid,
                     traj_kT=default_traj_kT,
-                    num_modes_to_return=num_modes_to_return
-                )  
+                    num_modes_to_return=num_modes_to_return,
+                    final_structures_dir=final_structure_dir,
+                    negative_phonon_threshold=negative_phonon_threshold_thz
+                )
             except Exception as e:  
                 print(f"  Error during final phonon analysis for unique structure {i+1}: {e}")  
                 import traceback  

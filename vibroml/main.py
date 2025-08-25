@@ -252,7 +252,8 @@ def main():
             q_point_for_specific_mode=q_point,
             band_idx_for_specific_mode=args.band_idx,
             displacement_magnitude=args.displacement,
-            preloaded_eigenmode_data=preloaded_eigenmode_data
+            preloaded_eigenmode_data=preloaded_eigenmode_data,
+            negative_phonon_threshold=args.negative_phonon_threshold_thz
         )
 
         
