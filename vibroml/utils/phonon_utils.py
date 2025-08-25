@@ -18,7 +18,7 @@ from .plotting_utils import plot_phonon_results
 from .utils import save_raw_data
 from .genetic_algorithm import GeneticAlgorithm
 from .structure_utils import estimate_commensurate_supercell_size
-def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None):
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None):
    """
    Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
 
@@ -41,6 +41,9 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
       band_idx_for_specific_mode (int, optional): User-defined mode index for specific mode analysis.
       preloaded_eigenmode_data (dict, optional): Pre-loaded eigenmode data from band.yaml file.
                                                  If provided, skips phonon calculation and uses this data directly.
+      negative_phonon_threshold (float, optional): Threshold for soft mode detection. If provided,
+                                                   when no modes below this threshold are found,
+                                                   the function will select highest frequency modes instead.
 
    Returns:
       tuple: A tuple containing:
@@ -154,7 +157,7 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
 
    softest_modes_info_list = analyze_special_points_and_modes(
       ph, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir, prefix, traj_kT=traj_kT, num_modes_to_return=num_modes_to_return,
-      target_q_point=q_point_for_specific_mode, target_band_idx=band_idx_for_specific_mode, displacement_magnitude=displacement_magnitude
+      target_q_point=q_point_for_specific_mode, target_band_idx=band_idx_for_specific_mode, displacement_magnitude=displacement_magnitude, negative_phonon_threshold=negative_phonon_threshold
    )
    time_taken = time.time() - start_time
 
@@ -250,8 +253,147 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
    time_taken = end_time - start_time
    print(f'Total time taken for this phonon analysis: {time_taken:.2f} s')
 
+   # Copy structure files to phonon analysis directory and add frequency to filenames if final_structures_dir is provided
+   if final_structures_dir and os.path.exists(final_structures_dir):
+       print(f"\n--- Processing Structure Files ---")
+       # Extract analysis identifier from prefix (e.g., "final_BaHfSe3_4.530_top_1_energy_m6p0976" -> "top_1_energy_m6p0976")
+       analysis_id_parts = prefix.split('_')
+       analysis_id = None
+       if len(analysis_id_parts) >= 3:
+           # Look for patterns like "top_1_energy_..." or "unique_1_energy_..."
+           for i, part in enumerate(analysis_id_parts):
+               if part in ['top', 'unique'] and i + 2 < len(analysis_id_parts) and analysis_id_parts[i + 2] == 'energy':
+                   analysis_id = '_'.join(analysis_id_parts[i:])
+                   break
+
+       if analysis_id:
+           # Add frequency information to structure filenames
+           if softest_modes_info_list:
+               softest_frequency = softest_modes_info_list[0]['frequency']
+               print(f"  Adding frequency information to structure filenames...")
+               add_frequency_to_structure_filenames(final_structures_dir, analysis_id, softest_frequency, units)
+
+           # Copy structure files to phonon analysis directory
+           print(f"  Copying structure files to phonon analysis directory...")
+           copy_structure_files_to_phonon_analysis_dir(output_dir, final_structures_dir, analysis_id)
+       else:
+           print(f"  Could not extract analysis_id from prefix: {prefix}")
+
    # Return the list of softest modes, the overall minimum frequency, and time taken
    return softest_modes_info_list, bsmin, time_taken
+
+
+def copy_structure_files_to_phonon_analysis_dir(phonon_analysis_dir, final_structures_dir, analysis_id):
+   """
+   Copy all structure file variants (CIF, XYZ, conventional, primitive) from final_structures/
+   directory to the corresponding phonon analysis directory for better organization and traceability.
+
+   Args:
+       phonon_analysis_dir (str): Path to the phonon analysis directory
+       final_structures_dir (str): Path to the final_structures directory
+       analysis_id (str): Analysis identifier to match files (e.g., "top_1_energy_m6p0976")
+   """
+   import shutil
+   import glob
+
+   if not os.path.exists(final_structures_dir):
+       print(f"  Warning: final_structures directory not found: {final_structures_dir}")
+       return
+
+   # Create a structures subdirectory in the phonon analysis directory
+   structures_subdir = os.path.join(phonon_analysis_dir, "structure_files")
+   os.makedirs(structures_subdir, exist_ok=True)
+
+   # Find all structure files that match the analysis_id
+   pattern = os.path.join(final_structures_dir, f"*{analysis_id}*")
+   matching_files = glob.glob(pattern)
+
+   # If no matches, try a more flexible approach using energy part
+   if not matching_files and 'energy_' in analysis_id:
+       energy_part = analysis_id.split('energy_')[1]
+       pattern = os.path.join(final_structures_dir, f"*energy_{energy_part}*")
+       matching_files = glob.glob(pattern)
+
+   copied_files = []
+   for src_file in matching_files:
+       if src_file.endswith(('.cif', '.xyz')):
+           filename = os.path.basename(src_file)
+           dest_file = os.path.join(structures_subdir, filename)
+           try:
+               shutil.copy2(src_file, dest_file)
+               copied_files.append(filename)
+               print(f"    Copied structure file: {filename}")
+           except Exception as e:
+               print(f"    Warning: Could not copy {filename}: {e}")
+
+   if copied_files:
+       print(f"  ✅ Copied {len(copied_files)} structure files to {structures_subdir}")
+   else:
+       print(f"  ⚠️  No matching structure files found for analysis_id: {analysis_id}")
+
+
+def add_frequency_to_structure_filenames(final_structures_dir, analysis_id, softest_frequency, units="THz"):
+   """
+   Rename structure files in final_structures/ directory to include the softest phonon frequency.
+
+   Args:
+       final_structures_dir (str): Path to the final_structures directory
+       analysis_id (str): Analysis identifier to match files (e.g., "top_1_energy_m6p0976")
+       softest_frequency (float): The softest phonon frequency
+       units (str): Units for frequency (default: "THz")
+   """
+   import glob
+
+   if not os.path.exists(final_structures_dir):
+       print(f"  Warning: final_structures directory not found: {final_structures_dir}")
+       return
+
+   # Format frequency for filename (replace . with p, - with m)
+   freq_str = f"{abs(softest_frequency):.4f}".replace('.', 'p')
+   if softest_frequency < 0:
+       freq_str = 'm' + freq_str
+   else:
+       freq_str = 'p' + freq_str
+
+   # Find all structure files that match the analysis_id
+   pattern = os.path.join(final_structures_dir, f"*{analysis_id}*")
+   matching_files = glob.glob(pattern)
+
+   # If no matches, try a more flexible approach using energy part
+   if not matching_files and 'energy_' in analysis_id:
+       energy_part = analysis_id.split('energy_')[1]
+       pattern = os.path.join(final_structures_dir, f"*energy_{energy_part}*")
+       matching_files = glob.glob(pattern)
+
+   renamed_files = []
+   for src_file in matching_files:
+       if src_file.endswith(('.cif', '.xyz')):
+           # Check if frequency is already in filename
+           if '_freq' in os.path.basename(src_file):
+               print(f"    Frequency already in filename: {os.path.basename(src_file)}")
+               continue
+
+           # Create new filename with frequency
+           base_name = os.path.basename(src_file)
+           name_parts = base_name.rsplit('.', 1)  # Split filename and extension
+           if len(name_parts) == 2:
+               new_name = f"{name_parts[0]}_freq{freq_str}{units}.{name_parts[1]}"
+           else:
+               new_name = f"{base_name}_freq{freq_str}{units}"
+
+           new_path = os.path.join(final_structures_dir, new_name)
+
+           try:
+               os.rename(src_file, new_path)
+               renamed_files.append((os.path.basename(src_file), new_name))
+               print(f"    Renamed: {os.path.basename(src_file)} → {new_name}")
+           except Exception as e:
+               print(f"    Warning: Could not rename {os.path.basename(src_file)}: {e}")
+
+   if renamed_files:
+       print(f"  ✅ Renamed {len(renamed_files)} structure files to include frequency ({softest_frequency:.4f} {units})")
+   else:
+       print(f"  ⚠️  No structure files renamed for analysis_id: {analysis_id}")
 
 
 
@@ -564,10 +706,13 @@ def _process_and_save_mode_data(ph, q_point, band_idx, frequency, units, output_
       traceback.print_exc()
 
 
-def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir, prefix, traj_kT=1, num_modes_to_return=2, target_q_point=None, target_band_idx=None, displacement_magnitude=1.0):
+def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir, prefix, traj_kT=1, num_modes_to_return=2, target_q_point=None, target_band_idx=None, displacement_magnitude=1.0, negative_phonon_threshold=None):
    """Analyzes frequencies at special points and identifies the softest modes.
    Optionally, it can also process and save displacements for a specific q-point and mode.
    Now also saves band structure and DOS data.
+
+   When no soft modes below the threshold are found, selects the highest frequency modes
+   from special k-points (optical modes) instead of the lowest frequency modes.
 
    Args:
       ph (ase.phonons.Phonons): The Phonons object.
@@ -585,6 +730,9 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
                                                    If None, only special points are analyzed.
       target_band_idx (int, optional): The index of the mode (0-indexed) for the target_q_point.
                                        Required if target_q_point is provided.
+      negative_phonon_threshold (float, optional): Threshold for soft mode detection. If provided,
+                                                   when no modes below this threshold are found,
+                                                   the function will select highest frequency modes instead.
     """
    print("\n--- Analyzing Special K-points ---")
 
@@ -687,6 +835,90 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
          all_soft_modes_with_displacements.append(softest_mode_info)
    else:
       print("\nNo negative frequencies found at special points.")
+
+      # If threshold is provided and no soft modes found, select highest frequency modes instead
+      if negative_phonon_threshold is not None:
+         print(f"No soft modes below threshold ({negative_phonon_threshold:.4f} {units}) found.")
+         print("Implementing optical mode selection: selecting highest frequency modes from special k-points.")
+
+         # Collect all positive frequency modes at special points
+         all_positive_modes_info = []
+         special_point_coords = path.special_points # Dictionary mapping label to coordinate
+
+         for label, coord in special_point_coords.items():
+            # Find the index of this special point in the path
+            kpt_index = None
+            for i, kpt in enumerate(path.kpts):
+               if np.allclose(kpt, coord, atol=1e-6):
+                  kpt_index = i
+                  break
+
+            if kpt_index is None:
+               print(f"Warning: Could not find k-point index for special point {label}")
+               continue
+
+            # Get frequencies at this k-point index
+            freqs_at_kpt = bs_energies[kpt_index]
+
+            # Iterate through all bands at this k-point to find positive frequencies
+            for band_idx, freq in enumerate(freqs_at_kpt):
+               if freq > 0: # Only consider positive frequencies
+                  mode_info = {
+                     "label": label,
+                     "coordinate": [float(c) for c in coord], # Convert numpy array to list for JSON
+                     "frequency": float(freq),
+                     "band_index": int(band_idx),
+                     "kpoint_index_in_path": int(kpt_index) # Store index in path.kpts
+                  }
+                  all_positive_modes_info.append(mode_info)
+
+         # Sort all positive modes by frequency (highest first)
+         all_positive_modes_info.sort(key=lambda x: x['frequency'], reverse=True)
+
+         # Select the top N highest frequency modes
+         top_n_highest_modes = []
+         processed_modes_keys = set() # To avoid duplicate modes (same k-point, same band)
+
+         for mode_info in all_positive_modes_info:
+            mode_key = (mode_info['kpoint_index_in_path'], mode_info['band_index'])
+            if mode_key not in processed_modes_keys:
+               top_n_highest_modes.append(mode_info)
+               processed_modes_keys.add(mode_key)
+               if len(top_n_highest_modes) >= num_modes_to_return:
+                  break
+
+         # Process the highest frequency modes similar to soft modes
+         if top_n_highest_modes:
+            print(f"\n--- Top {len(top_n_highest_modes)} Highest Frequency (Optical) Modes Analysis ---")
+            for i, highest_mode_info in enumerate(top_n_highest_modes):
+               print(f"   Optical Mode {i+1}: {highest_mode_info['label']} - Frequency: {highest_mode_info['frequency']:.4f} {units}")
+
+               raw_displacements = get_eigenvector_for_q_and_band_index(
+                   ph,
+                   np.array(highest_mode_info['coordinate']),
+                   highest_mode_info['band_index']
+               )
+               if raw_displacements is not None:
+                  # Add raw_displacements to the mode_info dictionary
+                  highest_mode_info['raw_displacements'] = raw_displacements.tolist()
+
+               # Call the helper function for each highest frequency mode
+               _process_and_save_mode_data(
+                     ph=ph,
+                     q_point=np.array(highest_mode_info['coordinate']),
+                     band_idx=highest_mode_info['band_index'],
+                     frequency=highest_mode_info['frequency'],
+                     units=units,
+                     output_dir=output_dir,
+                     traj_kT=traj_kT,
+                     prefix=f"optical_mode_{i+1}_{highest_mode_info['label']}"
+               )
+
+               all_soft_modes_with_displacements.append(highest_mode_info)
+         else:
+            print("No positive frequency modes found at special points.")
+      else:
+         print("No threshold provided - returning empty list.")
 
    # --- Handle specific target q-point and mode if provided ---
    if target_q_point is not None and target_band_idx is not None:
