@@ -174,8 +174,13 @@ def get_arg_parser_and_settings():
         "num_modes_to_return": default_settings.get("num_modes_to_return", 2),
         "ga_population_size": default_settings.get("ga_population_size", 50),
         "ga_mutation_rate": default_settings.get("ga_mutation_rate", 0.1),
+        "ga_generations": default_settings.get("ga_generations", 3),
         "num_new_points_per_iteration": default_settings.get("num_new_points_per_iteration", 30),
-        "default_method": default_settings.get("default_method", "ga")
+        "default_method": default_settings.get("default_method", "ga"),
+        "random_displacement_bounds": default_settings.get("random_displacement_bounds", [0.1, 2.0]),
+        "random_cell_perturbation": default_settings.get("random_cell_perturbation", True),
+        "random_seed": default_settings.get("random_seed", None),
+        "decomposition_threshold": default_settings.get("decomposition_threshold", 0.5)
     }
 
     parser = argparse.ArgumentParser(description="Calculate phonon band structure and DOS for crystal structures, with optional relaxation and soft mode analysis.")
@@ -188,8 +193,10 @@ def get_arg_parser_and_settings():
     parser.add_argument("--supercell", type=str, default=None, help="Supercell dimensions. 'N' for cubic (N,N,N) or 'Nx,Ny,Nz'.")
     parser.add_argument("--delta", type=float, default=settings["default_delta"], help=f"Displacement distance (default: {settings['default_delta']}).")
     parser.add_argument("--fmax", type=float, default=settings["default_fmax"], help=f"Max force tolerance for relaxation (default: {settings['default_fmax']} eV/Å).")
+    parser.add_argument("--relaxation-patience", type=int, default=5, help="Number of initial relaxation steps to wait before applying energy drop termination criteria (default: 5). Increase this value (e.g., 30) if structures fail during initial relaxation due to large energy changes.")
     parser.add_argument("--auto", action="store_true", help="Automatically run parameter sweep and soft mode optimization.")
-    parser.add_argument("--method", type=str, default=settings["default_method"], choices=["ga", "traditional"], help=f"Method for soft mode optimization (default: {settings['default_method']}).")
+    parser.add_argument("--method", type=str, default=settings["default_method"], choices=["ga", "traditional", "traditional_all", "opt_random"], help=f"Method for soft mode optimization (default: {settings['default_method']}).")
+    parser.add_argument("--output-prefix", type=str, default=None, help="Optional custom prefix to add before the structure name in output folder names.")
 
     # --- CORRECTED ARGUMENTS: default=None for nargs='+' arguments ---
     parser.add_argument("--screen_supercell_ns", type=str, nargs='+', default=None, help=f"List of supercell sizes for sweep. E.g., 2 '3,3,3'. (Default from settings)")
@@ -208,6 +215,7 @@ def get_arg_parser_and_settings():
     parser.add_argument("--num_modes_to_return", type=int, default=settings["num_modes_to_return"], help=f"Number of softest modes to return (default: {settings['num_modes_to_return']}).")
     parser.add_argument("--ga_population_size", type=int, default=settings["ga_population_size"], help=f"Population size for GA (default: {settings['ga_population_size']}).")
     parser.add_argument("--ga_mutation_rate", type=float, default=settings["ga_mutation_rate"], help=f"Mutation rate for GA (default: {settings['ga_mutation_rate']}).")
+    parser.add_argument("--ga_generations", type=int, default=settings["ga_generations"], help=f"Number of GA generations per main iteration (default: {settings['ga_generations']}).")
     parser.add_argument("--num_new_points_per_iteration", type=int, default=settings["num_new_points_per_iteration"], help=f"New structures per GA iteration (default: {settings['num_new_points_per_iteration']}).")
     parser.add_argument("--q", type=str, default=None, help="Q-point for generating a displaced supercell (e.g., '0.5,0,0').")
     parser.add_argument("--band_idx", type=int, default=None, help="Index of the phonon mode for displacement.")
@@ -219,8 +227,12 @@ def get_arg_parser_and_settings():
                         help='Comma-separated min,max bounds for mode2_ratio_scales in GA. Default: "-1.5,1.5"')  
     parser.add_argument('--ga_cell_scale_bounds', type=str, default="-0.5,0.5",  
                         help='Comma-separated min,max bounds for cell_scale_factors in GA. Default: "-0.5,0.5"')  
-    parser.add_argument('--ga_cell_angle_bounds', type=str, default="-45.0,45.0",  
+    parser.add_argument('--ga_cell_angle_bounds', type=str, default="-45.0,45.0",
                     help='Comma-separated min,max bounds for cell_angle_factors in GA. Default: "-45.0,45.0"')
+    parser.add_argument('--decomposition_threshold', type=float, default=settings["decomposition_threshold"],
+                    help=f'Energy threshold (in eV) below reference energy for flagging structures as decomposed. '
+                         f'Structures with E_relax < E_ref - decomposition_threshold are flagged as DECOMPOSED. '
+                         f'Default: {settings["decomposition_threshold"]} eV')
     return parser, settings
 
 def save_raw_data(bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, supercell_dims, delta, fmax, output_dir):  

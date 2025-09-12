@@ -175,8 +175,10 @@ class TestArgumentParsing:
             "num_modes_to_return": 2,
             "ga_population_size": 50,
             "ga_mutation_rate": 0.1,
+            "ga_generations": 3,
             "num_new_points_per_iteration": 30,
-            "default_method": "ga"
+            "default_method": "ga",
+            "decomposition_threshold": 0.5
         }
         
         from vibroml.utils.utils import get_arg_parser_and_settings

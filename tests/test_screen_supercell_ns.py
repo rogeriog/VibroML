@@ -219,6 +219,7 @@ loop_
             "--screen_supercell_ns", "2", "3",
             "--ga_population_size", "4",
             "--num_new_points_per_iteration", "2",
+            "--ga_generations", "2",
             "--units", "THz"
         ] + FAST_SCREEN_PARAMS
         

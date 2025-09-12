@@ -21,5 +21,10 @@
     "num_new_points_per_iteration": 50,
     "ga_population_size": 100,
     "ga_mutation_rate": 0.2,
-    "default_method": "ga"
+    "decomposition_threshold": 0.5,
+    "ga_generations": 3,
+    "default_method": "ga",
+    "random_displacement_bounds": [0.1, 2.0],
+    "random_cell_perturbation": true,
+    "random_seed": null
 }

@@ -238,16 +238,17 @@ def estimate_commensurate_supercell_size(q_point_frac, max_denominator=10):
     return tuple(supercell_dims)
 
 
-def generate_displaced_supercells(primitive_atoms,  
-                                  softest_modes_info_list, # Changed to a list of mode infos  
-                                  scale_mode1,             # Scaling factor for mode 1 displacements  
-                                  ratio_mode2_to_mode1,    # Single ratio for mode 2  
-                                  supercell_variants,  
-                                  output_base_dir,  
-                                  iteration_idx,  
-                                  original_prefix,  
-                                  cell_transformation_vector, # 6-element vector  
-                                  use_phase_factor=True): # NEW PARAMETER  
+def generate_displaced_supercells(primitive_atoms,
+                                  softest_modes_info_list, # Changed to a list of mode infos
+                                  scale_mode1,             # Scaling factor for mode 1 displacements
+                                  ratio_mode2_to_mode1,    # Single ratio for mode 2
+                                  supercell_variants,
+                                  output_base_dir,
+                                  iteration_idx,
+                                  original_prefix,
+                                  cell_transformation_vector, # 6-element vector
+                                  use_phase_factor=True,   # NEW PARAMETER
+                                  mutation_data=None):     # NEW PARAMETER for mode replacement info
    """  
    Generates supercells displaced along a combination of soft phonon modes  
    with flexible cell parameter transformations, considering q-point phase factors.  
@@ -482,22 +483,182 @@ def generate_displaced_supercells(primitive_atoms,
       # Apply the real part of the total displacements to the supercell atoms  
       displaced_atoms.set_positions(displaced_atoms.get_positions() + np.real(total_displacements_for_this_sample))  
   
-      # Filename convention update  
-      # d1 for displacement scale of mode 1  
-      # r21 for ratio of mode 2 to mode 1  
-      # c_ for cell transformation vector  
-      # pf_ for phase factor status  
-      # Using f-strings for precise formatting of floats in filename  
-      filename = (f"{original_prefix}_sc_{sc_n1}x{sc_n2}x{sc_n3}_d1_{scale_mode1:.3f}_r21_{ratio_mode2_to_mode1:.3f}_c_{cell_transform_str}_pf_{str(use_phase_factor).lower()}.cif")  
-      filepath = os.path.join(output_base_dir, filename)  
-      write(filepath, displaced_atoms) # displaced_atoms already has the cell transformation applied  
-      generated_files.append(filepath)  
+      # Filename convention update
+      # d1 for displacement scale of mode 1
+      # r21 for ratio of mode 2 to mode 1
+      # c_ for cell transformation vector
+      # pf_ for phase factor status
+      # mr_ for mode replacement info (if applicable)
+      # Using f-strings for precise formatting of floats in filename
+
+      # Add mode replacement info to filename if available
+      mode_replacement_str = ""
+      if mutation_data and mutation_data.get('mode_replaced', False) and mutation_data.get('selected_mode'):
+          selected_mode = mutation_data['selected_mode']
+          # Format: mr_LABEL_bIDX_fFREQ (e.g., mr_M_b2_fm1p234 for M point, band 2, -1.234 THz)
+          freq_str = f"{'m' if selected_mode['frequency'] < 0 else 'p'}{abs(selected_mode['frequency']):.3f}".replace('.', 'p')
+          mode_replacement_str = f"_mr_{selected_mode['label']}_b{selected_mode['band_index']}_f{freq_str}"
+
+      filename = (f"{original_prefix}_sc_{sc_n1}x{sc_n2}x{sc_n3}_d1_{scale_mode1:.3f}_r21_{ratio_mode2_to_mode1:.3f}_c_{cell_transform_str}_pf_{str(use_phase_factor).lower()}{mode_replacement_str}.cif")
+      filepath = os.path.join(output_base_dir, filename)
+      write(filepath, displaced_atoms) # displaced_atoms already has the cell transformation applied
+      generated_files.append(filepath)
+
+      filename_xyz = (f"{original_prefix}_sc_{sc_n1}x{sc_n2}x{sc_n3}_d1_{scale_mode1:.3f}_r21_{ratio_mode2_to_mode1:.3f}_c_{cell_transform_str}_pf_{str(use_phase_factor).lower()}{mode_replacement_str}.xyz")
+      filepath_xyz = os.path.join(output_base_dir, filename_xyz)
+      write(filepath_xyz, displaced_atoms)
+
+      # Enhanced logging for mode replacement
+      if mutation_data and mutation_data.get('mode_replaced', False):
+          selected_mode = mutation_data['selected_mode']
+          print(f"  Generated {filename} and {filename_xyz}")
+          print(f"    MODE REPLACEMENT: Second mode replaced with {selected_mode['label']} point, band {selected_mode['band_index']}, frequency {selected_mode['frequency']:.3f} THz")
+      else:
+          print(f"  Generated {filename} and {filename_xyz}")
   
-      filename_xyz = (f"{original_prefix}_sc_{sc_n1}x{sc_n2}x{sc_n3}_d1_{scale_mode1:.3f}_r21_{ratio_mode2_to_mode1:.3f}_c_{cell_transform_str}_pf_{str(use_phase_factor).lower()}.xyz")  
-      filepath_xyz = os.path.join(output_base_dir, filename_xyz)  
-      write(filepath_xyz, displaced_atoms)  
-      print(f"  Generated {filename} and {filename_xyz}")  
-  
-   print("Finished generating displaced supercells with combined modes and cell transformations.")  
+   print("Finished generating displaced supercells with combined modes and cell transformations.")
    return generated_files
+
+
+def generate_random_displaced_structures(primitive_atoms,
+                                       displacement_bounds,
+                                       supercell_variants,
+                                       output_base_dir,
+                                       iteration_idx,
+                                       original_prefix,
+                                       cell_transformation_vector=None,
+                                       cell_perturbation=True,
+                                       random_seed=None):
+    """
+    Generates structures with random atomic displacements and optional cell perturbations.
+
+    Args:
+        primitive_atoms (ase.atoms.Atoms): The primitive cell structure.
+        displacement_bounds (list): [min_displacement, max_displacement] in Angstroms.
+        supercell_variants (list): List of tuples defining supercell sizes, e.g., [(2,2,2), (3,3,3)].
+        output_base_dir (str): The main output directory.
+        iteration_idx (int): Current iteration index for naming.
+        original_prefix (str): Prefix for output filenames.
+        cell_transformation_vector (tuple): 6-element vector for cell parameter changes.
+        cell_perturbation (bool): Whether to apply random cell perturbations.
+        random_seed (int): Random seed for reproducibility.
+
+    Returns:
+        list: A list of paths to the generated random CIF files.
+    """
+    import numpy as np
+    import random
+    from ase.io import write
+    from ase.geometry.cell import cellpar_to_cell
+
+    print(f"\n--- Generating Random Displaced Structures (Iteration {iteration_idx}) ---")
+
+    if random_seed is not None:
+        np.random.seed(random_seed)
+        random.seed(random_seed)
+        print(f"   Random seed set to: {random_seed}")
+
+    generated_files = []
+    min_disp, max_disp = displacement_bounds
+
+    print(f"   Displacement bounds: [{min_disp:.3f}, {max_disp:.3f}] Å")
+    print(f"   Cell perturbation: {cell_perturbation}")
+    print(f"   Supercell variants: {supercell_variants}")
+
+    for supercell_variant in supercell_variants:
+        sc_n1, sc_n2, sc_n3 = supercell_variant
+
+        # Create supercell
+        supercell_atoms = primitive_atoms.repeat((sc_n1, sc_n2, sc_n3))
+
+        # Apply cell transformation if provided
+        if cell_transformation_vector is not None:
+            try:
+                # Get original cell parameters
+                original_cell_params = supercell_atoms.cell.cellpar()
+
+                # Apply transformations: [a_scale, b_scale, c_scale, alpha_change, beta_change, gamma_change]
+                new_cell_params = original_cell_params.copy()
+                new_cell_params[0] *= (1.0 + cell_transformation_vector[0])  # a
+                new_cell_params[1] *= (1.0 + cell_transformation_vector[1])  # b
+                new_cell_params[2] *= (1.0 + cell_transformation_vector[2])  # c
+                new_cell_params[3] += cell_transformation_vector[3]  # alpha
+                new_cell_params[4] += cell_transformation_vector[4]  # beta
+                new_cell_params[5] += cell_transformation_vector[5]  # gamma
+
+                # Create new cell matrix
+                new_cell_matrix = cellpar_to_cell(new_cell_params)
+                supercell_atoms.set_cell(new_cell_matrix, scale_atoms=True)
+
+            except (AssertionError, Exception) as e:
+                print(f"Warning: Cell transformation failed for supercell {supercell_variant}: {e}")
+                print("Continuing with original cell parameters.")
+
+        # Apply additional random cell perturbations if enabled
+        if cell_perturbation:
+            try:
+                current_cell_params = supercell_atoms.cell.cellpar()
+
+                # Small random perturbations to cell parameters (±2% for lengths, ±2° for angles)
+                cell_scale_perturbations = np.random.uniform(-0.02, 0.02, 3)
+                angle_perturbations = np.random.uniform(-2.0, 2.0, 3)
+
+                perturbed_cell_params = current_cell_params.copy()
+                perturbed_cell_params[0] *= (1.0 + cell_scale_perturbations[0])  # a
+                perturbed_cell_params[1] *= (1.0 + cell_scale_perturbations[1])  # b
+                perturbed_cell_params[2] *= (1.0 + cell_scale_perturbations[2])  # c
+                perturbed_cell_params[3] += angle_perturbations[0]  # alpha
+                perturbed_cell_params[4] += angle_perturbations[1]  # beta
+                perturbed_cell_params[5] += angle_perturbations[2]  # gamma
+
+                perturbed_cell_matrix = cellpar_to_cell(perturbed_cell_params)
+                supercell_atoms.set_cell(perturbed_cell_matrix, scale_atoms=True)
+
+            except (AssertionError, Exception) as e:
+                print(f"Warning: Random cell perturbation failed for supercell {supercell_variant}: {e}")
+                print("Continuing without additional cell perturbation.")
+
+        # Generate random atomic displacements
+        num_atoms = len(supercell_atoms)
+
+        # Random displacement magnitudes for each atom
+        displacement_magnitudes = np.random.uniform(min_disp, max_disp, num_atoms)
+
+        # Random displacement directions (unit vectors)
+        displacement_directions = np.random.randn(num_atoms, 3)
+        displacement_directions = displacement_directions / np.linalg.norm(displacement_directions, axis=1, keepdims=True)
+
+        # Calculate total displacements
+        total_displacements = displacement_directions * displacement_magnitudes[:, np.newaxis]
+
+        # Apply displacements to atomic positions
+        displaced_positions = supercell_atoms.get_positions() + total_displacements
+        supercell_atoms.set_positions(displaced_positions)
+
+        # Wrap atoms back into the unit cell
+        supercell_atoms.wrap(pbc=True)
+
+        # Generate filename using GA-style naming convention
+        cell_transform_str = "none"
+        if cell_transformation_vector is not None:
+            cell_transform_str = "_".join([f"{x:.3f}" for x in cell_transformation_vector])
+
+        # Use GA-style naming: similar to displaced supercells but with random prefix
+        filename = (f"{original_prefix}_random_sc_{sc_n1}x{sc_n2}x{sc_n3}_"
+                   f"disp_{min_disp:.3f}to{max_disp:.3f}_"
+                   f"c_{cell_transform_str}.cif")
+
+        filepath = os.path.join(output_base_dir, filename)
+        write(filepath, supercell_atoms)
+        generated_files.append(filepath)
+
+        # Also save as XYZ for convenience
+        filename_xyz = filename.replace('.cif', '.xyz')
+        filepath_xyz = os.path.join(output_base_dir, filename_xyz)
+        write(filepath_xyz, supercell_atoms)
+
+        print(f"   Generated random structure: {os.path.basename(filepath)}")
+
+    print(f"Generated {len(generated_files)} random displaced structure files.")
+    return generated_files
 
