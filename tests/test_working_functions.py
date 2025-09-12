@@ -178,7 +178,7 @@ class TestGeneticAlgorithmActual:
     def test_genetic_algorithm_generate_individual(self):
         """Test individual generation with actual GA class."""
         from vibroml.utils.genetic_algorithm import GeneticAlgorithm
-        
+
         ga = GeneticAlgorithm(
             population_size=5,
             mutation_rate=0.1,
@@ -188,13 +188,20 @@ class TestGeneticAlgorithmActual:
             cell_angle_bounds=(-5.0, 5.0),
             supercell_variants=[(2, 2, 2)]
         )
-        
-        # Test the actual method name
-        individual = ga._generate_random_individual()
-        
+
+        # Test the actual method name - now returns (individual_params, mutation_data)
+        individual_result = ga._generate_random_individual()
+
         # Check the structure matches what the actual function returns
-        assert isinstance(individual, tuple)
-        assert len(individual) == 5  # Based on actual implementation
+        assert isinstance(individual_result, tuple)
+        assert len(individual_result) == 2  # (individual_params, mutation_data)
+
+        individual_params, mutation_data = individual_result
+        assert isinstance(individual_params, tuple)
+        assert len(individual_params) == 5  # Based on actual implementation
+        assert isinstance(mutation_data, dict)
+        assert 'mode_replaced' in mutation_data
+        assert 'selected_mode' in mutation_data
 
 
 class TestConfigurationValues:

@@ -17,30 +17,85 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 import re
 import io
 
-class EnergyVolumeStopper:  
-    def __init__(self, optimizer, energy_increase_threshold=0.5,   
-                 energy_decrease_threshold=-5.0, volume_threshold=2.5,   
-                 max_steps=1000):  
-        """  
-        A logger to stop optimization based on energy and volume criteria.  
-          
-        Stops if:  
-        1. Energy increases dramatically (> energy_increase_threshold eV/atom from initial)  
-        2. Energy decreases dramatically (< energy_decrease_threshold eV/atom from initial)  
-           (e.g., -5.0 eV/atom, indicating likely decomposition or unphysical state)  
-        3. Volume increases > volume_threshold times initial volume  
-        4. Maximum steps reached  
-        """  
-        self.optimizer = optimizer  
-        self.energy_increase_threshold = energy_increase_threshold  # eV/atom  
-        self.energy_decrease_threshold = energy_decrease_threshold  # eV/atom (negative value)  
-        self.volume_threshold = volume_threshold  # multiplier  
-        self.max_steps = max_steps  
-          
-        # Internal state  
-        self.initial_energy_per_atom = None  
-        self.initial_volume = None  
-        self.step_count = 0  
+class MinimumIterationOptimizer:
+    """
+    A wrapper for ASE optimizers that enforces a minimum number of iterations
+    before allowing convergence based on force criteria.
+    """
+    def __init__(self, optimizer, min_iterations=5):
+        self.optimizer = optimizer
+        self.min_iterations = min_iterations
+        self.iteration_count = 0
+        self.original_converged = None
+
+        # Store original converged method
+        if hasattr(optimizer, 'converged'):
+            self.original_converged = optimizer.converged
+            # Replace with our custom converged method
+            optimizer.converged = self._custom_converged
+
+    def _custom_converged(self, forces=None):
+        """Custom convergence check that requires minimum iterations."""
+        self.iteration_count += 1
+
+        # Always return False if we haven't reached minimum iterations
+        if self.iteration_count < self.min_iterations:
+            print(f"   Iteration {self.iteration_count}: Minimum iterations not reached ({self.min_iterations} required)")
+            return False
+
+        # After minimum iterations, use original convergence criteria
+        if self.original_converged:
+            result = self.original_converged(forces)
+            if result:
+                print(f"   Iteration {self.iteration_count}: Converged after minimum iterations requirement met")
+            return result
+        else:
+            # Fallback: check forces manually if no original converged method
+            if forces is not None:
+                max_force = np.sqrt((forces**2).sum(axis=1)).max()
+                fmax = getattr(self.optimizer, 'fmax', 0.05)  # Default fmax if not set
+                result = max_force < fmax
+                if result:
+                    print(f"   Iteration {self.iteration_count}: Converged (max force {max_force:.6f} < {fmax:.6f})")
+                return result
+            return False
+
+    def run(self, fmax=0.05, steps=None):
+        """Run the optimizer with minimum iteration enforcement."""
+        self.optimizer.fmax = fmax
+        return self.optimizer.run(fmax=fmax, steps=steps)
+
+    def attach(self, callback):
+        """Attach callback to the underlying optimizer."""
+        return self.optimizer.attach(callback)
+
+class EnergyVolumeStopper:
+    def __init__(self, optimizer, energy_increase_threshold=0.5,
+                 energy_decrease_threshold=-5.0, volume_threshold=2.5,
+                 max_steps=1000, min_iterations=5):
+        """
+        A logger to stop optimization based on energy and volume criteria.
+
+        Stops if:
+        1. Energy increases dramatically (> energy_increase_threshold eV/atom from initial)
+        2. Energy decreases dramatically (< energy_decrease_threshold eV/atom from initial)
+           (e.g., -5.0 eV/atom, indicating likely decomposition or unphysical state)
+        3. Volume increases > volume_threshold times initial volume
+        4. Maximum steps reached
+
+        But only after min_iterations have been completed.
+        """
+        self.optimizer = optimizer
+        self.energy_increase_threshold = energy_increase_threshold  # eV/atom
+        self.energy_decrease_threshold = energy_decrease_threshold  # eV/atom (negative value)
+        self.volume_threshold = volume_threshold  # multiplier
+        self.max_steps = max_steps
+        self.min_iterations = min_iterations  # NEW: minimum iterations before applying stopping criteria
+
+        # Internal state
+        self.initial_energy_per_atom = None
+        self.initial_volume = None
+        self.step_count = 0
           
     def __call__(self):  
         self.step_count += 1  
@@ -52,44 +107,65 @@ class EnergyVolumeStopper:
             # Otherwise, the object is the Atoms object itself  
             atoms = optimizable_object
           
-        try:  
-            current_energy = atoms.get_potential_energy()  
-            current_energy_per_atom = current_energy / len(atoms)  
-            current_volume = atoms.get_volume()  
-              
-            # Initialize on first step  
-            if self.initial_energy_per_atom is None:  
-                self.initial_energy_per_atom = current_energy_per_atom  
-                self.initial_volume = current_volume  
-                print(f"   Step 1: Initial energy per atom: {self.initial_energy_per_atom:.6f} eV/atom")  
-                print(f"   Step 1: Initial volume: {self.initial_volume:.3f} Å³")  
-                return  
-              
-            print(f"   Step {self.step_count}: Energy/atom={current_energy_per_atom:.6f} eV/atom, "  
-                  f"Volume={current_volume:.3f} Å³")  
-              
-            # Calculate energy change relative to initial  
-            energy_change_from_initial = current_energy_per_atom - self.initial_energy_per_atom  
-              
-            # Check 1: Dramatic energy increase  
+        try:
+            current_energy = atoms.get_potential_energy()
+            if current_energy is None:
+                print(f"   Step {self.step_count}: Could not retrieve energy, skipping energy/volume monitoring")
+                return
+            current_energy_per_atom = current_energy / len(atoms)
+            current_volume = atoms.get_volume()
+            if current_volume is None:
+                print(f"   Step {self.step_count}: Could not retrieve volume, skipping energy/volume monitoring")
+                return
+
+            # Initialize on first step
+            if self.initial_energy_per_atom is None and self.step_count > self.min_iterations :
+                self.initial_energy_per_atom = current_energy_per_atom
+                self.initial_volume = current_volume
+                print(f"   Step 1: Initial energy per atom: {self.initial_energy_per_atom:.6f} eV/atom")
+                print(f"   Step 1: Initial volume: {self.initial_volume:.3f} Å³")
+                return
+
+            print(f"   Step {self.step_count}: Energy/atom={current_energy_per_atom:.6f} eV/atom, "
+                  f"Volume={current_volume:.3f} Å³")
+
+            # Calculate energy change relative to initial - add None check to prevent TypeError
+            if self.initial_energy_per_atom is None:
+                print(f"   Step {self.step_count}: Initial energy not yet set, skipping energy change checks")
+                return
+
+            energy_change_from_initial = current_energy_per_atom - self.initial_energy_per_atom
+
+            # Don't apply stopping criteria until minimum iterations are reached
+            if self.step_count <= self.min_iterations:
+                print(f"   Step {self.step_count}: Minimum iterations not reached ({self.min_iterations} required)")
+                return
+
+            # Check 1: Dramatic energy increase
             if energy_change_from_initial > self.energy_increase_threshold:  
                 print(f"\n   STOPPING: Energy increased dramatically!")  
                 print(f"   Energy change from initial: {energy_change_from_initial:.6f} eV/atom > threshold {self.energy_increase_threshold} eV/atom")  
                 raise StopIteration  
               
-            # Check 2: Dramatic energy decrease (unphysical drop)  
-            if energy_change_from_initial < self.energy_decrease_threshold:  
-                print(f"\n   STOPPING: Energy decreased dramatically (unphysical drop)!")  
-                print(f"   Energy change from initial: {energy_change_from_initial:.6f} eV/atom < threshold {self.energy_decrease_threshold} eV/atom")  
-                print(f"   This often indicates decomposition or an ill-posed structure.")  
-                raise StopIteration  
+            # Check 2: Dramatic energy decrease (unphysical drop)
+            if energy_change_from_initial < self.energy_decrease_threshold:
+                print(f"\n   STOPPING: Energy decreased dramatically (unphysical drop)!")
+                print(f"   Energy change from initial: {energy_change_from_initial:.6f} eV/atom < threshold {self.energy_decrease_threshold} eV/atom")
+                print(f"   This often indicates decomposition or an ill-posed structure.")
+                print(f"\n   WARNING: If this structure failed during initial relaxation due to large energy changes,")
+                print(f"   consider increasing the --relaxation-patience parameter (current: {self.min_iterations}).")
+                print(f"   Try using --relaxation-patience 30 or higher to allow more initial relaxation steps.")
+                raise StopIteration
               
-            # Check 3: Volume expansion  
-            volume_ratio = current_volume / self.initial_volume  
-            if volume_ratio > self.volume_threshold:  
-                print(f"\n   STOPPING: Volume expanded too much!")  
-                print(f"   Volume ratio: {volume_ratio:.2f} > threshold {self.volume_threshold}")  
-                raise StopIteration  
+            # Check 3: Volume expansion - add None check to prevent TypeError
+            if self.initial_volume is None:
+                print(f"   Step {self.step_count}: Initial volume not yet set, skipping volume expansion check")
+            else:
+                volume_ratio = current_volume / self.initial_volume
+                if volume_ratio > self.volume_threshold:
+                    print(f"\n   STOPPING: Volume expanded too much!")
+                    print(f"   Volume ratio: {volume_ratio:.2f} > threshold {self.volume_threshold}")
+                    raise StopIteration
               
             # Check 4: Max steps  
             if self.step_count >= self.max_steps:  
@@ -102,8 +178,20 @@ class EnergyVolumeStopper:
             print(f"\n   ERROR in energy/volume monitoring: {e}")
 
 
-def relax_structure(atoms, calculator, engine, fmax, output_dir, original_cif_path, save_trajectory=True):
-    """Performs structure relaxation using the specified engine."""
+def relax_structure(atoms, calculator, engine, fmax, output_dir, original_cif_path, save_trajectory=True, relaxation_patience=5):
+    """
+    Performs structure relaxation using the specified engine.
+
+    Args:
+        atoms: ASE Atoms object to relax
+        calculator: ASE calculator to use
+        engine: Relaxation engine ('mace' or 'm3gnet')
+        fmax: Maximum force tolerance
+        output_dir: Directory to save outputs
+        original_cif_path: Path to original CIF file
+        save_trajectory: Whether to save relaxation trajectory
+        relaxation_patience: Number of initial steps to wait before applying energy drop termination criteria
+    """
     print(f"\n» {engine.upper()} relaxation starting…")
     start_time = time.time()
 
@@ -144,14 +232,15 @@ def relax_structure(atoms, calculator, engine, fmax, output_dir, original_cif_pa
             # Create an instance of our custom logger with adjusted parameters
             # These parameters are crucial for force-based stagnation detection
             max_steps_for_mace = 1000
-             
 
-            energy_volume_logger = EnergyVolumeStopper(  
-                opt,   
-                energy_increase_threshold=0.5,   # Stop if energy increases > 0.5 eV/atom  
-                energy_decrease_threshold=-5.0,  # Stop if energy decreases < -5.0 eV/atom (e.g., -6.0, -7.0)  
-                volume_threshold=2.5,            # Stop if volume > 2.5x initial  
-                max_steps=max_steps_for_mace  
+
+            energy_volume_logger = EnergyVolumeStopper(
+                opt,
+                energy_increase_threshold=0.5,   # Stop if energy increases > 0.5 eV/atom
+                energy_decrease_threshold=-5.0,  # Stop if energy decreases < -5.0 eV/atom (e.g., -6.0, -7.0)
+                volume_threshold=2.5,            # Stop if volume > 2.5x initial
+                max_steps=max_steps_for_mace,
+                min_iterations=relaxation_patience  # Use user-specified patience parameter
             )
             opt.attach(energy_volume_logger) # Attach the logger to the optimizer
 
@@ -311,7 +400,7 @@ def relax_structure(atoms, calculator, engine, fmax, output_dir, original_cif_pa
 
     return relaxed_atoms
 
-def relax_structures_in_folder(folder_path: str, calculator: Calculator, engine: str, fmax: float, save_trajectory: bool = False):
+def relax_structures_in_folder(folder_path: str, calculator: Calculator, engine: str, fmax: float, save_trajectory: bool = False, relaxation_patience: int = 5):
     """
     Relaxes all CIF structures found in a given folder and outputs a summary file.
 
@@ -364,12 +453,13 @@ def relax_structures_in_folder(folder_path: str, calculator: Calculator, engine:
 
              # Adjusted parameters for force-centric stagnation
              max_steps_for_mace = 1000
-             energy_volume_logger = EnergyVolumeStopper(  
-                                    optimizer,  
-                                    energy_increase_threshold=0.5,  
-                                    energy_decrease_threshold=-5.0,  
-                                    volume_threshold=2.5,  
-                                    max_steps=max_steps_for_mace  
+             energy_volume_logger = EnergyVolumeStopper(
+                                    optimizer,
+                                    energy_increase_threshold=0.5,
+                                    energy_decrease_threshold=-5.0,
+                                    volume_threshold=2.5,
+                                    max_steps=max_steps_for_mace,
+                                    min_iterations=relaxation_patience  # Use user-specified patience parameter
                                 )
              optimizer.attach(energy_volume_logger)
 

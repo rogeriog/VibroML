@@ -30,6 +30,7 @@ SIMPLIFIED_GA_PARAMS = [
     "--ga_population_size", "4",
     "--num_new_points_per_iteration", "2",
     "--ga_mutation_rate", "0.1",
+    "--ga_generations", "2",
 
     # Soft mode optimization parameters (minimal values for speed)
     "--soft_mode_max_iterations", "1",

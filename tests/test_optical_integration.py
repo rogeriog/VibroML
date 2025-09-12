@@ -20,7 +20,9 @@ class TestOpticalModeIntegration:
     @patch('vibroml.utils.phonon_utils.Phonons')
     @patch('vibroml.utils.phonon_utils.get_phonon_results')
     @patch('vibroml.utils.phonon_utils.analyze_special_points_and_modes')
-    def test_run_single_phonon_analysis_with_threshold(self, mock_analyze, mock_get_results, mock_phonons):
+    @patch('vibroml.utils.phonon_utils.save_phonopy_band_yaml')
+    @patch('vibroml.utils.phonon_utils.plot_phonon_results')
+    def test_run_single_phonon_analysis_with_threshold(self, mock_plot, mock_save_yaml, mock_analyze, mock_get_results, mock_phonons):
         """Test that run_single_phonon_analysis passes threshold correctly."""
         from vibroml.utils.phonon_utils import run_single_phonon_analysis
         from vibroml.utils.structure_utils import initialize_calculator
@@ -50,7 +52,7 @@ class TestOpticalModeIntegration:
             mock_discontinuities, mock_y_label, mock_bsmin
         )
         
-        # Mock analyze_special_points_and_modes to return optical modes
+        # Mock analyze_special_points_and_modes to return optical modes and tracked data
         mock_optical_modes = [
             {
                 'label': 'Gamma',
@@ -60,7 +62,12 @@ class TestOpticalModeIntegration:
                 'raw_displacements': [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0]]
             }
         ]
-        mock_analyze.return_value = mock_optical_modes
+        mock_tracked_data = {
+            'soft_modes': [],
+            'highest_freq_modes': [mock_optical_modes[0]],
+            'lowest_freq_modes': []
+        }
+        mock_analyze.return_value = (mock_optical_modes, mock_tracked_data)
         
         # Mock phonons object
         mock_ph = Mock()
@@ -87,7 +94,7 @@ class TestOpticalModeIntegration:
             assert call_args[1]['negative_phonon_threshold'] == -0.1
             
             # Verify the result structure
-            softest_modes_info_list, bsmin, time_taken = result
+            softest_modes_info_list, bsmin, time_taken, tracked_k_points_data = result
             assert len(softest_modes_info_list) == 1
             assert softest_modes_info_list[0]['frequency'] == 3.0
             assert bsmin == 1.0
@@ -102,7 +109,7 @@ class TestOpticalModeIntegration:
         # Mock sys.argv to simulate command line arguments
         test_args = [
             'vibroml',
-            'tests/test_structures/simple_cubic.cif',
+            '--cif', 'tests/test_structures/simple_cubic.cif',
             '--engine', 'mace',
             '--units', 'THz',
             '--negative_phonon_threshold_thz', '-0.1'
@@ -119,7 +126,7 @@ class TestOpticalModeIntegration:
                             mock_relax.return_value = (self.atoms, True)
                             
                             # Mock run_single_phonon_analysis to avoid actual computation
-                            mock_run.return_value = ([], 0.0, 1.0)
+                            mock_run.return_value = ([], 0.0, 1.0, {})
                             
                             try:
                                 main()
@@ -167,10 +174,13 @@ class TestOpticalModeIntegration:
                                 with patch('vibroml.auto_optimize.SpacegroupAnalyzer') as mock_sga:
                                     # Setup mocks
                                     mock_init_calc.return_value = Mock()
-                                    mock_run_phonon.return_value = (initial_soft_modes, -1.0, 1.0)
+                                    mock_run_phonon.return_value = (initial_soft_modes, -1.0, 1.0, {})
                                     mock_ga_instance = Mock()
                                     mock_ga.return_value = mock_ga_instance
                                     mock_ga_instance.evolve.return_value = []
+                                    mock_ga_instance.population = [
+                                        {'params': (1.0, 0.0, (1.0, 1.0, 1.0, 0.0, 0.0, 0.0), (2, 2, 2), True), 'fitness': None, 'mutation_data': {'mode_replaced': False, 'selected_mode': None}}
+                                    ]
                                     mock_gen.return_value = []
                                     mock_relax.return_value = []
                                     mock_find.return_value = []
@@ -199,6 +209,7 @@ class TestOpticalModeIntegration:
                                                 num_modes_to_return=2,
                                                 ga_population_size=10,
                                                 ga_mutation_rate=0.1,
+                                                ga_generations=1,
                                                 num_new_points_per_iteration=5,
                                                 ga_disp_scale_bounds=(0.1, 2.0),
                                                 ga_ratio_bounds=(-1.0, 1.0),

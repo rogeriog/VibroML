@@ -37,7 +37,8 @@ SIMPLIFIED_PARAMS = [
     # GA parameters (overridden for safety, though not used in traditional mode)
     "--ga_population_size", "2",
     "--num_new_points_per_iteration", "1",
-    "--ga_mutation_rate", "0.1"
+    "--ga_mutation_rate", "0.1",
+    "--ga_generations", "2"
 ]
 
 class TestAutoTraditionalMode:

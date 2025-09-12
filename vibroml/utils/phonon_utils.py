@@ -51,6 +51,12 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
                   including its raw displacements. Returns an empty list if no soft modes found.
          - float: The most negative frequency found (bsmin).
          - float: The total time taken for the analysis.
+         - dict: Comprehensive tracking data for GA mode replacement containing:
+           {
+             'soft_modes': [list of all soft modes below threshold],
+             'highest_freq_modes': [list of highest frequency modes at special k-points],
+             'lowest_freq_modes': [list of lowest frequency modes at special k-points, excluding Gamma]
+           }
    """
    start_time = time.time()
 
@@ -155,7 +161,7 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
 
    print(f"\n--- Step 5: Analyzing Special Points and Top {num_modes_to_return} Softest Modes ---")
 
-   softest_modes_info_list = analyze_special_points_and_modes(
+   softest_modes_info_list, tracked_k_points_data = analyze_special_points_and_modes(
       ph, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir, prefix, traj_kT=traj_kT, num_modes_to_return=num_modes_to_return,
       target_q_point=q_point_for_specific_mode, target_band_idx=band_idx_for_specific_mode, displacement_magnitude=displacement_magnitude, negative_phonon_threshold=negative_phonon_threshold
    )
@@ -279,8 +285,8 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
        else:
            print(f"  Could not extract analysis_id from prefix: {prefix}")
 
-   # Return the list of softest modes, the overall minimum frequency, and time taken
-   return softest_modes_info_list, bsmin, time_taken
+   # Return the list of softest modes, the overall minimum frequency, time taken, and tracked k-points data
+   return softest_modes_info_list, bsmin, time_taken, tracked_k_points_data
 
 
 def copy_structure_files_to_phonon_analysis_dir(phonon_analysis_dir, final_structures_dir, analysis_id):
@@ -733,6 +739,16 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
       negative_phonon_threshold (float, optional): Threshold for soft mode detection. If provided,
                                                    when no modes below this threshold are found,
                                                    the function will select highest frequency modes instead.
+
+   Returns:
+      tuple: (softest_modes_info_list, tracked_k_points_data) where:
+         - softest_modes_info_list: List of top N softest modes as before
+         - tracked_k_points_data: Dict containing comprehensive tracking data for GA mode replacement:
+           {
+             'soft_modes': [list of all soft modes below threshold],
+             'highest_freq_modes': [list of highest frequency modes at special k-points],
+             'lowest_freq_modes': [list of lowest frequency modes at special k-points, excluding Gamma]
+           }
     """
    print("\n--- Analyzing Special K-points ---")
 
@@ -762,7 +778,7 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
 
       # Iterate through all bands at this k-point to find negative frequencies
       for band_idx, freq in enumerate(freqs_at_kpt):
-         if freq < 0: # Only consider negative frequencies
+         if freq < negative_phonon_threshold: # Only consider negative frequencies
                mode_info = {
                   "label": label,
                   "coordinate": [float(c) for c in coord], # Convert numpy array to list for JSON
@@ -807,6 +823,7 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
 
    # Report and get displacements for the top N softest modes
    all_soft_modes_with_displacements = []
+   
    if top_n_softest_modes:
       print(f"\n--- Top {len(top_n_softest_modes)} Softest Modes Analysis ---")
       for i, softest_mode_info in enumerate(top_n_softest_modes):
@@ -953,8 +970,107 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
          import traceback
          traceback.print_exc()
    
-   # Return the list of softest mode info dictionaries
-   return all_soft_modes_with_displacements
+   # --- Collect comprehensive tracking data for GA mode replacement ---
+   tracked_k_points_data = {
+       'soft_modes': [],
+       'highest_freq_modes': [],
+       'lowest_freq_modes': []
+   }
+
+   # 1. Collect all soft modes (negative frequencies below threshold)
+   if negative_phonon_threshold is not None:
+       # Add raw_displacements to all soft modes for structure generation
+       soft_modes_with_displacements = []
+       for mode_info in all_negative_modes_info:
+           mode_with_displacements = mode_info.copy()
+           raw_displacements = get_eigenvector_for_q_and_band_index(
+               ph,
+               np.array(mode_info['coordinate']),
+               mode_info['band_index']
+           )
+           if raw_displacements is not None:
+               mode_with_displacements['raw_displacements'] = raw_displacements.tolist()
+           else:
+               print(f"Warning: Could not get raw_displacements for soft mode {mode_info.get('label', 'unknown')} at {mode_info.get('coordinate', 'unknown')}")
+           soft_modes_with_displacements.append(mode_with_displacements)
+
+       tracked_k_points_data['soft_modes'] = soft_modes_with_displacements
+       print(f"Tracked {len(tracked_k_points_data['soft_modes'])} soft modes for GA mode replacement")
+
+   # 2. Collect highest frequency modes at special k-points
+   all_highest_freq_modes = []
+   for label, coord in special_point_coords.items():
+       # Find the index of this special point in the path
+       kpt_index = None
+       for i, kpt in enumerate(path.kpts):
+           if np.allclose(kpt, coord, atol=1e-6):
+               kpt_index = i
+               break
+
+       if kpt_index is None:
+           continue
+
+       # Get frequencies at this k-point index
+       freqs_at_kpt = bs_energies[kpt_index]
+
+       # Find the highest frequency mode at this k-point
+       max_freq_idx = np.argmax(freqs_at_kpt)
+       max_freq = freqs_at_kpt[max_freq_idx]
+
+       mode_info = {
+           "label": label,
+           "coordinate": [float(c) for c in coord],
+           "frequency": float(max_freq),
+           "band_index": int(max_freq_idx),
+           "kpoint_index_in_path": int(kpt_index)
+       }
+       all_highest_freq_modes.append(mode_info)
+
+   # Sort by frequency (highest first) and store
+   all_highest_freq_modes.sort(key=lambda x: x['frequency'], reverse=True)
+   tracked_k_points_data['highest_freq_modes'] = all_highest_freq_modes
+   print(f"Tracked {len(tracked_k_points_data['highest_freq_modes'])} highest frequency modes for GA mode replacement")
+
+   # 3. Collect lowest frequency modes at special k-points (excluding Gamma point)
+   all_lowest_freq_modes = []
+   for label, coord in special_point_coords.items():
+       # Skip Gamma point (usually labeled as 'G' or at origin)
+       if label.upper() == 'G' or np.allclose(coord, [0.0, 0.0, 0.0], atol=1e-6):
+           continue
+
+       # Find the index of this special point in the path
+       kpt_index = None
+       for i, kpt in enumerate(path.kpts):
+           if np.allclose(kpt, coord, atol=1e-6):
+               kpt_index = i
+               break
+
+       if kpt_index is None:
+           continue
+
+       # Get frequencies at this k-point index
+       freqs_at_kpt = bs_energies[kpt_index]
+
+       # Find the lowest frequency mode at this k-point
+       min_freq_idx = np.argmin(freqs_at_kpt)
+       min_freq = freqs_at_kpt[min_freq_idx]
+
+       mode_info = {
+           "label": label,
+           "coordinate": [float(c) for c in coord],
+           "frequency": float(min_freq),
+           "band_index": int(min_freq_idx),
+           "kpoint_index_in_path": int(kpt_index)
+       }
+       all_lowest_freq_modes.append(mode_info)
+
+   # Sort by frequency (lowest first) and store
+   all_lowest_freq_modes.sort(key=lambda x: x['frequency'])
+   tracked_k_points_data['lowest_freq_modes'] = all_lowest_freq_modes
+   print(f"Tracked {len(tracked_k_points_data['lowest_freq_modes'])} lowest frequency modes (excluding Gamma) for GA mode replacement")
+
+   # Return both the original softest modes list and the comprehensive tracking data
+   return all_soft_modes_with_displacements, tracked_k_points_data
 
 def load_eigenmode_from_band_yaml(band_yaml_path, target_q_point, target_band_idx):
     """

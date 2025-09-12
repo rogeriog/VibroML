@@ -62,15 +62,36 @@ def main():
     
     # Store the parsed supercell dimensions for use throughout the script
     args.supercell_dims = supercell_dims
-    args.ga_disp_scale_bounds = [float(x) for x in args.ga_disp_scale_bounds.split(',')]  
-    args.ga_ratio_bounds = [float(x) for x in args.ga_ratio_bounds.split(',')]  
-    args.ga_cell_scale_bounds = [float(x) for x in args.ga_cell_scale_bounds.split(',')]  
+    args.ga_disp_scale_bounds = [float(x) for x in args.ga_disp_scale_bounds.split(',')]
+    args.ga_ratio_bounds = [float(x) for x in args.ga_ratio_bounds.split(',')]
+    args.ga_cell_scale_bounds = [float(x) for x in args.ga_cell_scale_bounds.split(',')]
     args.ga_cell_angle_bounds = [float(x) for x in args.ga_cell_angle_bounds.split(',')]
+
+    # Validate decomposition threshold
+    if args.decomposition_threshold <= 0:
+        print(f"Error: --decomposition_threshold must be a positive number, got {args.decomposition_threshold}")
+        sys.exit(1)
+    print(f"Using decomposition threshold: {args.decomposition_threshold:.3f} eV (structures with E_relax < E_ref - {args.decomposition_threshold:.3f} will be flagged as DECOMPOSED)")
     
     print("\n--- Initilization: Setting up Output Directory and Cleaning Cache ---")
     cif_filename_base = os.path.splitext(os.path.basename(args.cif))[0]
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    output_folder_name = f"{cif_filename_base}_phonon_output_{timestamp}"
+
+    # Add method suffix to output folder name
+    method_suffix_map = {
+        "traditional": "_TRADITIONAL",
+        "ga": "_GA",
+        "traditional_all": "_TRADITIONAL_ALL",
+        "opt_random": "_OPT_RANDOM"
+    }
+    method_suffix = method_suffix_map.get(args.method, "")
+
+    # Add custom prefix if provided
+    prefix_part = ""
+    if hasattr(args, 'output_prefix') and args.output_prefix:
+        prefix_part = f"{args.output_prefix}_"
+
+    output_folder_name = f"{prefix_part}{cif_filename_base}{method_suffix}_phonon_output_{timestamp}"
     output_dir = os.path.join(os.getcwd(), output_folder_name)
     os.makedirs(output_dir, exist_ok=True)
     print(f"Output directory created: {output_dir}")
@@ -118,7 +139,7 @@ def main():
     if not args.no_relax:
         initial_relax_dir = os.path.join(output_dir, "initial_relaxation_for_single_run")
         os.makedirs(initial_relax_dir, exist_ok=True)
-        current_atoms = relax_structure(initial_atoms.copy(), calculator, args.engine, args.fmax, initial_relax_dir, args.cif)
+        current_atoms = relax_structure(initial_atoms.copy(), calculator, args.engine, args.fmax, initial_relax_dir, args.cif, relaxation_patience=getattr(args, 'relaxation_patience', 5))
         if current_atoms is None:
             print("Initial relaxation failed. Exiting single run.")
             sys.exit(1)
@@ -167,12 +188,13 @@ def main():
             args.traj_kT,  
             args.cell_scale_factors,  
             args.num_modes_to_return,  
-            args.ga_population_size,  
-            args.ga_mutation_rate,  
-            args.num_new_points_per_iteration,  
-            args.ga_disp_scale_bounds,  
-            args.ga_ratio_bounds,  
-            args.ga_cell_scale_bounds,  
+            args.ga_population_size,
+            args.ga_mutation_rate,
+            args.ga_generations,
+            args.num_new_points_per_iteration,
+            args.ga_disp_scale_bounds,
+            args.ga_ratio_bounds,
+            args.ga_cell_scale_bounds,
             args.ga_cell_angle_bounds
         )
     else:
@@ -235,7 +257,7 @@ def main():
             sys.exit(1)
             
         # Call the consolidated run_single_phonon_analysis function
-        softest_modes_info_list, bsmin, time_taken = run_single_phonon_analysis(
+        softest_modes_info_list, bsmin, time_taken, tracked_k_points_data = run_single_phonon_analysis(
             current_atoms.copy(),
             calculator,
             args.engine,
