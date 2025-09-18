@@ -7,27 +7,27 @@ class GeneticAlgorithm:
     def __init__(self,
                  population_size,
                  mutation_rate,
-                 displacement_scale_bounds, # [min, max] for mode1 displacement
-                 ratio_mode2_to_mode1_bounds, # [min, max] for ratio
-                 cell_scale_bounds, # [min, max] for a,b,c percentage change
-                 cell_angle_bounds, # [min, max] for alpha,beta,gamma degree change
-                 num_offspring=30, # Number of new individuals to generate per evolution step
-                 selection_strategy='tournament', # or 'roulette', 'rank'
-                 tournament_size=3 # For tournament selection
+                 displacement_scale_bounds,
+                 ratio_mode2_to_mode1_bounds,
+                 cell_scale_bounds,
+                 cell_angle_bounds,
+                 supercell_variants,
+                 phase_factor_off_ratio=0.5,
+                 num_offspring=30,
+                 selection_strategy='tournament',
+                 tournament_size=10,
+                 tracked_k_points_data=None
                 ):
         """
         Initializes the Genetic Algorithm.
 
         Args:
-            population_size (int): The number of individuals in the population.
-            mutation_rate (float): The probability of a gene mutating (0.0 to 1.0).
-            displacement_scale_bounds (tuple): (min, max) for displacement_scale_mode1.
-            ratio_mode2_to_mode1_bounds (tuple): (min, max) for ratio_mode2_to_mode1.
-            cell_scale_bounds (tuple): (min, max) for percentage change in a, b, c.
-            cell_angle_bounds (tuple): (min, max) for degree change in alpha, beta, gamma.
-            num_offspring (int): Number of new individuals to generate in each evolve step.
-            selection_strategy (str): Method for selecting parents ('tournament', 'roulette', 'rank').
-            tournament_size (int): Number of individuals in each tournament if using 'tournament' selection.
+            tracked_k_points_data (dict, optional): Comprehensive tracking data for mode replacement:
+                {
+                  'soft_modes': [list of all soft modes below threshold],
+                  'highest_freq_modes': [list of highest frequency modes at special k-points],
+                  'lowest_freq_modes': [list of lowest frequency modes at special k-points, excluding Gamma]
+                }
         """
         self.population_size = population_size
         self.mutation_rate = mutation_rate
@@ -35,22 +35,98 @@ class GeneticAlgorithm:
         self.ratio_mode2_to_mode1_bounds = ratio_mode2_to_mode1_bounds
         self.cell_scale_bounds = cell_scale_bounds
         self.cell_angle_bounds = cell_angle_bounds
+        self.supercell_variants = supercell_variants
         self.num_offspring = num_offspring
         self.selection_strategy = selection_strategy
         self.tournament_size = tournament_size
+        self.phase_factor_off_ratio = phase_factor_off_ratio
+
+        # Mode tracking for second mode replacement
+        self.tracked_k_points_data = tracked_k_points_data or {
+            'soft_modes': [],
+            'highest_freq_modes': [],
+            'lowest_freq_modes': []
+        }
 
         # The population will be a list of dictionaries:
-        # [{'params': (disp_scale, ratio, (sa,sb,sc,sal,sbe,sga)), 'fitness': energy}, ...]
+        # [{'params': (disp_scale, ratio, cell_transform_vec, supercell_variant, use_phase_factor),
+        #   'fitness': energy, 'mutation_data': {...}}, ...]
         self.population = []
 
     def _generate_random_individual(self):
-        """Generates a single random individual (parameter set) within bounds."""
+        """Generates a single random individual (parameter set) within bounds.
+
+        Returns:
+            tuple: (individual_params, mutation_data) where:
+                - individual_params: (disp_scale, ratio, cell_transform_vec, supercell_variant, use_phase_factor)
+                - mutation_data: dict containing mutation tracking information
+        """
         disp_scale = random.uniform(*self.displacement_scale_bounds)
         ratio = random.uniform(*self.ratio_mode2_to_mode1_bounds)
         cell_scales = [random.uniform(*self.cell_scale_bounds) for _ in range(3)]
         cell_angles = [random.uniform(*self.cell_angle_bounds) for _ in range(3)]
         cell_transformation_vector = tuple(cell_scales + cell_angles)
-        return (disp_scale, ratio, cell_transformation_vector)
+
+        # Pick a random supercell variant from the provided list
+        supercell_variant = random.choice(self.supercell_variants)
+        use_phase_factor = random.choices([True, False], weights=[1-self.phase_factor_off_ratio, self.phase_factor_off_ratio])[0]
+
+        # Probabilistic second mode replacement during initialization
+        mode_replaced = False
+        selected_mode = None
+
+        if random.random() < self.mutation_rate:
+            selected_mode = self._select_random_mode_for_replacement()
+            if selected_mode:
+                mode_replaced = True
+
+        mutation_data = self._create_mutation_data(mode_replaced, selected_mode)
+        individual_params = (disp_scale, ratio, cell_transformation_vector, supercell_variant, use_phase_factor)
+
+        return individual_params, mutation_data
+
+    def _get_available_modes_for_replacement(self):
+        """Get all available modes for second mode replacement."""
+        available_modes = []
+
+        # Add soft modes if available
+        if self.tracked_k_points_data['soft_modes']:
+            available_modes.extend(self.tracked_k_points_data['soft_modes'])
+
+        # If no soft modes, add frequency extrema modes
+        if not available_modes:
+            # Add highest frequency modes
+            if self.tracked_k_points_data['highest_freq_modes']:
+                available_modes.extend(self.tracked_k_points_data['highest_freq_modes'])
+
+            # Add lowest frequency modes (excluding Gamma)
+            if self.tracked_k_points_data['lowest_freq_modes']:
+                available_modes.extend(self.tracked_k_points_data['lowest_freq_modes'])
+
+        return available_modes
+
+    def _select_random_mode_for_replacement(self):
+        """Randomly select a mode from available modes for replacement."""
+        available_modes = self._get_available_modes_for_replacement()
+
+        if not available_modes:
+            return None
+
+        selected_mode = random.choice(available_modes)
+        return {
+            'label': selected_mode['label'],
+            'coordinate': selected_mode['coordinate'],
+            'frequency': selected_mode['frequency'],
+            'band_index': selected_mode['band_index'],
+            'kpoint_index_in_path': selected_mode['kpoint_index_in_path']
+        }
+
+    def _create_mutation_data(self, mode_replaced=False, selected_mode=None):
+        """Create mutation tracking data for an individual."""
+        return {
+            'mode_replaced': mode_replaced,
+            'selected_mode': selected_mode.copy() if selected_mode else None
+        }
 
     def initialize_population(self, initial_individuals=None):
         """
@@ -60,164 +136,300 @@ class GeneticAlgorithm:
         """
         self.population = []
         if initial_individuals:
-            # Initial individuals should be in the format:
-            # [{'params': (disp_scale, ratio, cell_transform_vec), 'fitness': energy}, ...]
+            # Ensure all initial individuals have mutation_data for backward compatibility
+            for ind in initial_individuals:
+                if 'mutation_data' not in ind:
+                    # Add default mutation_data for backward compatibility
+                    ind['mutation_data'] = {'mode_replaced': False, 'selected_mode': None}
+
             self.population.extend(initial_individuals)
             # If initial_individuals are fewer than population_size, fill the rest randomly
             while len(self.population) < self.population_size:
-                self.population.append({'params': self._generate_random_individual(), 'fitness': None})
+                individual_params, mutation_data = self._generate_random_individual()
+                self.population.append({
+                    'params': individual_params,
+                    'fitness': None,
+                    'mutation_data': mutation_data
+                })
         else:
             for _ in range(self.population_size):
-                self.population.append({'params': self._generate_random_individual(), 'fitness': None})
+                individual_params, mutation_data = self._generate_random_individual()
+                self.population.append({
+                    'params': individual_params,
+                    'fitness': None,
+                    'mutation_data': mutation_data
+                })
 
+        # Count and report mode replacements during initialization
+        mode_replacements = sum(1 for ind in self.population if ind.get('mutation_data', {}).get('mode_replaced', False))
         print(f"Initialized GA population with {len(self.population)} individuals.")
+        print(f"Mode replacements during initialization: {mode_replacements}/{len(self.population)}")
+
+    def get_population_with_mutation_data(self):
+        """Returns the current population parameters with their corresponding mutation data.
+
+        Returns:
+            tuple: (list of parameters, list of mutation data)
+        """
+        params_list = [ind['params'] for ind in self.population]
+        mutation_data_list = [ind['mutation_data'] for ind in self.population]
+        return params_list, mutation_data_list
 
     def _select_parents(self):
-        """Selects two parents from the current population based on the selection strategy."""
-        if not self.population or all(ind['fitness'] is None for ind in self.population):
-            raise ValueError("Population is empty or no fitness values available for selection.")
-
-        # Filter out individuals with None fitness for selection
-        eligible_population = [ind for ind in self.population if ind['fitness'] is not None]
-        if not eligible_population:
-            # If no individuals have fitness, fall back to random selection or re-initialization
-            print("Warning: No individuals with valid fitness for selection. Selecting randomly.")
-            return random.sample(self.population, 2) # Select any two, even if fitness is None
-
-        if self.selection_strategy == 'tournament':
-            # Tournament selection: pick N random individuals, choose the best one
-            def tournament_selection():
-                contenders = random.sample(eligible_population, min(self.tournament_size, len(eligible_population)))
-                # Fitness is energy, so lower is better (min energy)
-                return min(contenders, key=lambda x: x['fitness'])
-
-            parent1 = tournament_selection()
-            parent2 = tournament_selection()
-            # Ensure parents are distinct if possible, though not strictly required for GA
-            while parent1 == parent2 and len(eligible_population) > 1:
-                parent2 = tournament_selection()
-            return parent1['params'], parent2['params']
-
-        elif self.selection_strategy == 'roulette':
-            # Roulette wheel selection: probability proportional to fitness (inverted for minimization)
-            # Convert energy (minimization) to a "score" (maximization)
-            # A common way is max_energy - current_energy + small_constant
-            fitness_values = [ind['fitness'] for ind in eligible_population]
-            max_energy = max(fitness_values)
-            # Add a small constant to avoid zero or negative scores if max_energy == current_energy
-            scores = [max_energy - f + 1e-6 for f in fitness_values]
-            total_score = sum(scores)
-            if total_score == 0: # All scores are effectively zero, pick randomly
-                print("Warning: All fitness scores are effectively zero. Selecting randomly.")
-                return random.sample(eligible_population, 2)[0]['params'], random.sample(eligible_population, 2)[1]['params']
-
-            probabilities = [s / total_score for s in scores]
-            
-            # Select two parents based on probabilities
-            parent1_idx = np.random.choice(len(eligible_population), p=probabilities)
-            parent2_idx = np.random.choice(len(eligible_population), p=probabilities)
-            
-            # Ensure parents are distinct if possible
-            while parent1_idx == parent2_idx and len(eligible_population) > 1:
-                parent2_idx = np.random.choice(len(eligible_population), p=probabilities)
-            
-            return eligible_population[parent1_idx]['params'], eligible_population[parent2_idx]['params']
-
-        else:
+        """Selects two parents from the current population based on the selection strategy."""  
+        eligible_population = [ind for ind in self.population if ind['fitness'] is not None]  
+  
+        if not eligible_population:  
+            # If no individuals have valid fitness, we cannot select based on fitness.  
+            # This should ideally not happen if initialize_population is called correctly  
+            # and fitness is evaluated for at least some individuals.  
+            # Fallback: Generate random individuals if no valid population to select from.  
+            print("Warning: No individuals with valid fitness for selection. Generating random parents.")  
+            return self._generate_random_individual(), self._generate_random_individual()  
+  
+        if len(eligible_population) < 2:  
+            # If there's only one or zero eligible individuals, we can't pick two distinct parents.  
+            # In this case, we might pick the same parent twice, or generate a random one.  
+            print(f"Warning: Only {len(eligible_population)} individual(s) with valid fitness. Parent selection might be limited.")  
+            if len(eligible_population) == 1:  
+                # If only one, pick it twice  
+                return eligible_population[0]['params'], eligible_population[0]['params']  
+            else: # len == 0, handled above  
+                return self._generate_random_individual(), self._generate_random_individual()  
+  
+  
+        if self.selection_strategy == 'tournament':  
+            def tournament_selection_single():  
+                # Ensure tournament_size doesn't exceed eligible_population size  
+                current_tournament_size = min(self.tournament_size, len(eligible_population))  
+                if current_tournament_size == 0: # Should not happen due to checks above  
+                    raise ValueError("Cannot perform tournament selection with no eligible individuals.")  
+                  
+                contenders = random.sample(eligible_population, current_tournament_size)  
+                return min(contenders, key=lambda x: x['fitness'])  
+  
+            parent1_obj = tournament_selection_single()  
+            parent2_obj = tournament_selection_single()  
+  
+            # Ensure parent2 is different from parent1 if possible  
+            # This loop ensures we get two *different* individuals (objects) if the population allows.  
+            # If eligible_population has only one unique object, this loop will eventually break.  
+            attempts = 0  
+            max_attempts = 10 # Prevent infinite loop for very small populations  
+            while parent1_obj == parent2_obj and len(eligible_population) > 1 and attempts < max_attempts:  
+                parent2_obj = tournament_selection_single()  
+                attempts += 1  
+              
+            # If after max_attempts, they are still the same, and population > 1,  
+            # it means tournament_selection_single is consistently picking the same object.  
+            # This is unlikely with random.sample unless eligible_population is tiny.  
+            # In such a case, it's acceptable to proceed with identical parents.  
+  
+            return parent1_obj['params'], parent2_obj['params']  
+  
+        elif self.selection_strategy == 'roulette':  
+            # ... (your existing roulette code, which seems fine) ...  
+            fitness_values = [ind['fitness'] for ind in eligible_population]  
+            max_energy = max(fitness_values)  
+            scores = [max_energy - f + 1e-6 for f in fitness_values]  
+            total_score = sum(scores)  
+            if total_score == 0:  
+                print("Warning: All fitness scores are effectively zero. Selecting randomly.")  
+                p1, p2 = random.sample(eligible_population, 2)  
+                return p1['params'], p2['params']  
+  
+            probabilities = [s / total_score for s in scores]  
+            # Ensure replace=True for small populations, as we might pick the same parent twice  
+            parent_indices = np.random.choice(len(eligible_population), size=2, p=probabilities, replace=True)  
+            return eligible_population[parent_indices[0]]['params'], eligible_population[parent_indices[1]]['params']  
+  
+        else:  
             raise ValueError(f"Unknown selection strategy: {self.selection_strategy}")
 
     def _crossover(self, parent1_params, parent2_params):
-        """Performs single-point crossover between two parent parameter sets."""
-        # Parameters are: (disp_scale, ratio, (sa,sb,sc,sal,sbe,sga))
-        # Total 1 + 1 + 6 = 8 genes
+        """Performs crossover on numerical genes and categorical (supercell) genes separately."""
+        # parent_params = (disp_scale, ratio, cell_transform_vec, supercell_variant)
         
-        # Convert tuples to lists for mutability
-        p1_list = [parent1_params[0], parent1_params[1]] + list(parent1_params[2])
-        p2_list = [parent2_params[0], parent2_params[1]] + list(parent2_params[2])
+        # 1. Crossover for numerical parts (genes 0, 1, and the tuple at 2)
+        p1_numeric = [parent1_params[0], parent1_params[1]] + list(parent1_params[2])
+        p2_numeric = [parent2_params[0], parent2_params[1]] + list(parent2_params[2])
+        
+        crossover_point = random.randint(1, len(p1_numeric) - 1)
+        
+        child1_numeric_list = p1_numeric[:crossover_point] + p2_numeric[crossover_point:]
+        child2_numeric_list = p2_numeric[:crossover_point] + p1_numeric[crossover_point:]
+        
+        # 2. Crossover for the supercell gene (categorical)
+        # Each child randomly inherits the supercell from one of the parents.
+        child1_sc = random.choice([parent1_params[3], parent2_params[3]])
+        child2_sc = random.choice([parent1_params[3], parent2_params[3]])
+        
+        # 3. Crossover for the use_phase_factor gene (boolean)  
+        child1_pf = random.choice([parent1_params[4], parent2_params[4]])  
+        child2_pf = random.choice([parent1_params[4], parent2_params[4]])
 
-        crossover_point = random.randint(1, len(p1_list) - 1) # Crossover point can be after any gene except the last
-
-        child1_list = p1_list[:crossover_point] + p2_list[crossover_point:]
-        child2_list = p2_list[:crossover_point] + p1_list[crossover_point:]
-
-        # Convert back to original structure
-        child1_params = (child1_list[0], child1_list[1], tuple(child1_list[2:]))
-        child2_params = (child2_list[0], child2_list[1], tuple(child2_list[2:]))
-
+        # 3. Reconstruct the full parameter tuples for the children
+        child1_params = (child1_numeric_list[0], child1_numeric_list[1], tuple(child1_numeric_list[2:]), child1_sc, child1_pf)
+        child2_params = (child2_numeric_list[0], child2_numeric_list[1], tuple(child2_numeric_list[2:]), child2_sc, child2_pf)
+        
         return child1_params, child2_params
 
     def _mutate(self, individual_params):
-        """Mutates an individual's parameter set based on mutation_rate."""
-        # Parameters are: (disp_scale, ratio, (sa,sb,sc,sal,sbe,sga))
-        mutated_params_list = [individual_params[0], individual_params[1]] + list(individual_params[2])
+        """Mutates numerical and categorical genes of an individual.
 
-        # Define bounds for each gene type
+        Returns:
+            tuple: (mutated_individual_params, mutation_data) where:
+                - mutated_individual_params: (disp_scale, ratio, cell_transform_vec, supercell_variant, use_phase_factor)
+                - mutation_data: dict containing mutation tracking information
+        """
+        # individual_params = (disp_scale, ratio, cell_transform_vec, supercell_variant)
+        disp_scale, ratio, cell_transform_vec, supercell_variant, use_phase_factor = individual_params
+
+        # 1. Mutate numerical parts
+        mutated_numeric_list = [disp_scale, ratio] + list(cell_transform_vec)
         bounds = [self.displacement_scale_bounds, self.ratio_mode2_to_mode1_bounds] + \
                  [self.cell_scale_bounds] * 3 + [self.cell_angle_bounds] * 3
 
-        for i in range(len(mutated_params_list)):
+        for i in range(len(mutated_numeric_list)):
             if random.random() < self.mutation_rate:
                 min_val, max_val = bounds[i]
-                # Apply a small random perturbation within bounds
-                # A common mutation strategy is to add a small Gaussian noise
-                # or simply re-randomize within a smaller range around the current value
-                # For "high mutation", re-randomizing within the full bounds is also an option.
-                # Let's try re-randomizing within the full bounds for high mutation.
-                mutated_params_list[i] = random.uniform(min_val, max_val)
-                
-                # Ensure bounds are respected after mutation
-                mutated_params_list[i] = max(min_val, min(max_val, mutated_params_list[i]))
+                mutated_numeric_list[i] = random.uniform(min_val, max_val)
+                mutated_numeric_list[i] = max(min_val, min(max_val, mutated_numeric_list[i]))
 
-        return (mutated_params_list[0], mutated_params_list[1], tuple(mutated_params_list[2:]))
+        mutated_disp_scale = mutated_numeric_list[0]
+        mutated_ratio = mutated_numeric_list[1]
+        mutated_cell_transform_vec = tuple(mutated_numeric_list[2:])
+
+        # 2. Mutate the supercell gene
+        mutated_supercell_variant = supercell_variant
+        if random.random() < self.mutation_rate and len(self.supercell_variants) > 1:
+            # Pick a new, different supercell variant from the list of possibilities
+            possible_new_variants = [sc for sc in self.supercell_variants if sc != supercell_variant]
+            if possible_new_variants:
+                mutated_supercell_variant = random.choice(possible_new_variants)
+
+        # 3. Mutate the use_phase_factor gene
+        mutated_use_phase_factor = use_phase_factor
+        if random.random() < self.mutation_rate:
+            mutated_use_phase_factor = not use_phase_factor # Flip the boolean value
+
+        # 4. Probabilistic second mode replacement during mutation
+        mode_replaced = False
+        selected_mode = None
+
+        if random.random() < self.mutation_rate:
+            selected_mode = self._select_random_mode_for_replacement()
+            if selected_mode:
+                mode_replaced = True
+
+        mutation_data = self._create_mutation_data(mode_replaced, selected_mode)
+        mutated_individual_params = (mutated_disp_scale, mutated_ratio, mutated_cell_transform_vec, mutated_supercell_variant, mutated_use_phase_factor)
+
+        return mutated_individual_params, mutation_data
 
     def evolve(self, current_population_with_fitness):
-        """
-        Evolves the population for one generation.
-        
-        Args:
-            current_population_with_fitness (list): A list of dictionaries,
-                each with 'params' (tuple) and 'fitness' (float, energy).
-                This is the result of the previous iteration's calculations.
-        
+        """Evolves the population for one generation.
+
         Returns:
-            list: A list of new parameter sets (individuals) for the next generation.
-                  These are tuples: (disp_scale, ratio, cell_transformation_vector).
+            tuple: (list of new offspring parameters, list of corresponding mutation data)
         """
-        # Update the GA's internal population with the evaluated fitness values
         self.population = current_population_with_fitness
-        
+
         # Sort population by fitness (energy), lowest energy is best
-        self.population.sort(key=lambda x: x['fitness'])
+        # Handle cases where fitness might be None
+        valid_population = [p for p in self.population if p['fitness'] is not None]
+        if not valid_population:
+             print("No valid fitness values in population to evolve. Generating random offspring.")
+             offspring_with_data = [self._generate_random_individual() for _ in range(self.num_offspring)]
+             return [params for params, _ in offspring_with_data]
+
+        valid_population.sort(key=lambda x: x['fitness'])
+        self.population = valid_population # Update population to only include valid ones
 
         new_offspring_params = []
-        
-        # Elitism: Keep the best individual(s) directly
-        # Let's keep the single best individual without modification
-        if self.population:
-            new_offspring_params.append(self.population[0]['params'])
-            # Adjust num_offspring if we're using elitism to ensure total count is met
-            num_to_generate = self.num_offspring - 1
-        else:
-            num_to_generate = self.num_offspring
+        mutation_data_list = []
 
-        # Generate new offspring until num_offspring is met
+        # Elitism: Keep the single best individual (no mutation data for elite)
+        new_offspring_params.append(self.population[0]['params'])
+        mutation_data_list.append({'mode_replaced': False, 'selected_mode': None})
+
+        # Generate the rest of the offspring
         while len(new_offspring_params) < self.num_offspring:
             try:
                 parent1_params, parent2_params = self._select_parents()
             except ValueError as e:
-                print(f"Error during parent selection: {e}. Generating random individuals instead.")
-                # Fallback: if selection fails, generate random individuals
-                new_offspring_params.append(self._generate_random_individual())
-                continue # Skip to next iteration of while loop
+                print(f"Error during parent selection: {e}. Generating a random individual instead.")
+                individual_params, mutation_data = self._generate_random_individual()
+                new_offspring_params.append(individual_params)
+                mutation_data_list.append(mutation_data)
+                continue
 
             child1_params, child2_params = self._crossover(parent1_params, parent2_params)
 
-            mutated_child1 = self._mutate(child1_params)
-            mutated_child2 = self._mutate(child2_params)
+            # Mutate child1
+            mutated_child1_params, child1_mutation_data = self._mutate(child1_params)
+            new_offspring_params.append(mutated_child1_params)
+            mutation_data_list.append(child1_mutation_data)
 
-            new_offspring_params.append(mutated_child1)
+            # Mutate child2 if we still need more offspring
             if len(new_offspring_params) < self.num_offspring:
-                new_offspring_params.append(mutated_child2)
-        
+                mutated_child2_params, child2_mutation_data = self._mutate(child2_params)
+                new_offspring_params.append(mutated_child2_params)
+                mutation_data_list.append(child2_mutation_data)
+
+        # Count and report mode replacements during evolution
+        mode_replacements = sum(1 for data in mutation_data_list if data['mode_replaced'])
         print(f"Generated {len(new_offspring_params)} new offspring for the next generation.")
-        return new_offspring_params
+        print(f"Mode replacements during evolution: {mode_replacements}/{len(new_offspring_params)}")
+
+        # Detailed logging for mode replacements
+        if mode_replacements > 0:
+            print("  Detailed mode replacement information:")
+            for i, data in enumerate(mutation_data_list):
+                if data['mode_replaced'] and data['selected_mode']:
+                    selected_mode = data['selected_mode']
+                    print(f"    Individual {i+1}: Second mode replaced with {selected_mode['label']} point, "
+                          f"band {selected_mode['band_index']}, frequency {selected_mode['frequency']:.3f} THz, "
+                          f"k-point index {selected_mode.get('kpoint_index_in_path', 'N/A')}")
+
+        # Store mutation data for potential use in population summaries
+        self.last_generation_mutation_data = mutation_data_list
+
+        return new_offspring_params, mutation_data_list
+
+    def get_mutation_summary(self):
+        """Get summary of mutation data for the last generation.
+
+        Returns:
+            dict: Summary containing mutation statistics and details
+        """
+        if not hasattr(self, 'last_generation_mutation_data'):
+            return {
+                'total_individuals': 0,
+                'mode_replacements': 0,
+                'replacement_rate': 0.0,
+                'selected_modes': []
+            }
+
+        mutation_data = self.last_generation_mutation_data
+        total_individuals = len(mutation_data)
+        mode_replacements = sum(1 for data in mutation_data if data['mode_replaced'])
+        replacement_rate = mode_replacements / total_individuals if total_individuals > 0 else 0.0
+
+        selected_modes = []
+        for data in mutation_data:
+            if data['mode_replaced'] and data['selected_mode']:
+                selected_modes.append({
+                    'label': data['selected_mode']['label'],
+                    'frequency': data['selected_mode']['frequency'],
+                    'band_index': data['selected_mode']['band_index'],
+                    'kpoint_index_in_path': data['selected_mode'].get('kpoint_index_in_path', 'N/A'),
+                    'coordinate': data['selected_mode'].get('coordinate', 'N/A')
+                })
+
+        return {
+            'total_individuals': total_individuals,
+            'mode_replacements': mode_replacements,
+            'replacement_rate': replacement_rate,
+            'selected_modes': selected_modes
+        }
