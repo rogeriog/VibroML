@@ -5,9 +5,14 @@ from pymatgen.core import Structure
 from m3gnet.models import M3GNet, M3GNetCalculator, Potential
 import numpy as np
 from .utils import HAVE_MACE, get_mace_device, mace_mp
-from ase.build import make_supercell 
+from ase.build import make_supercell
 from ase.io import read, write
 from ase.atoms import Atoms
+from ase.cell import Cell
+from ase.geometry.cell import cellpar_to_cell
+from fractions import Fraction # For estimating supercell size
+from ase.visualize import view 
+
 
 def load_structure(cif_path):
    """Loads a structure from a CIF file and converts it to an ASE Atoms object."""
@@ -46,15 +51,15 @@ def initialize_calculator(engine, model_name="medium-omat-0"):
    return calculator
 
 def print_initial_structure_info(atoms):
-   """Prints basic information about the initial structure."""  
-   print("\n--- Initial Structure Information ---")  
-   print(f"Formula: {atoms.get_chemical_formula()}")  
-   print(f"Number of atoms: {len(atoms)}")  
-   print(f"Cell volume: {atoms.get_volume():.4f} Å³")  
-   print("Cell parameters (a, b, c, alpha, beta, gamma):")  
-   cell = atoms.get_cell()  
-   print(f"  a={cell.lengths()[0]:.4f}, b={cell.lengths()[1]:.4f}, c={cell.lengths()[2]:.4f}")  
-   print(f"  alpha={cell.angles()[0]:.2f}, beta={cell.angles()[1]:.2f}, gamma={cell.angles()[2]:.2f}")  
+   """Prints basic information about the initial structure."""
+   print("\n--- Initial Structure Information ---")
+   print(f"Formula: {atoms.get_chemical_formula()}")
+   print(f"Number of atoms: {len(atoms)}")
+   print(f"Cell volume: {atoms.get_volume():.4f} Å³")
+   print("Cell parameters (a, b, c, alpha, beta, gamma):")
+   cell = atoms.get_cell()
+   print(f"  a={cell.lengths()[0]:.4f}, b={cell.lengths()[1]:.4f}, c={cell.lengths()[2]:.4f}")
+   print(f"  alpha={cell.angles()[0]:.2f}, beta={cell.angles()[1]:.2f}, gamma={cell.angles()[2]:.2f}")
    print("-------------------------------------")
    initial_fractional_coords = atoms.get_scaled_positions()
    print("   Initial Fractional Coordinates:")
@@ -106,112 +111,246 @@ def save_relaxed_structure(relaxed_atoms, original_cif_path, engine, fmax, outpu
    relaxed_struct.to(filename=relaxed_cif_path)
    print(f"Relaxed structure saved to: {relaxed_cif_path}")
 
-import numpy as np
-import os
-from ase import Atoms
-from ase.build import make_supercell
-from ase.io import write
-from ase.cell import Cell # Import Cell for creating new cell matrices
+def generate_supercell_variants(base_supercell, max_variants=5):
+    """
+    Generate variants of a supercell for optimization.
+    
+    Args:
+        base_supercell (tuple): Base supercell dimensions (nx, ny, nz)
+        max_variants (int): Maximum number of variants to generate
+    
+    Returns:
+        list: List of supercell variants as tuples
+    """
+    variants = [base_supercell]  # Include the original
+    
+    nx, ny, nz = base_supercell
+    
+    # Generate variants by scaling individual dimensions
+    scale_factors = [0.5, 1.5, 2.0]
+    
+    for scale in scale_factors:
+        # Scale each dimension independently
+        for i in range(3):
+            new_dims = list(base_supercell)
+            new_dims[i] = max(1, int(new_dims[i] * scale))
+            variant = tuple(new_dims)
+            
+            if variant not in variants and len(variants) < max_variants:
+                variants.append(variant)
+    
+    # Add some completely different variants
+    additional_variants = [
+        (max(1, nx-1), ny, nz),
+        (nx, max(1, ny-1), nz),
+        (nx, ny, max(1, nz-1)),
+        (nx+1, ny, nz),
+        (nx, ny+1, nz),
+        (nx, ny, nz+1),
+    ]
+    
+    for variant in additional_variants:
+        if variant not in variants and len(variants) < max_variants:
+            variants.append(variant)
+    
+    return variants[:max_variants]
+
+def estimate_commensurate_supercell_size_custom(q_point_frac, base_supercell=(1, 1, 1), max_denominator=10):
+    """
+    Estimates commensurate supercell dimensions based on q-point and a base supercell.
+    
+    Args:
+        q_point_frac (list): Q-point in fractional coordinates
+        base_supercell (tuple): Base supercell to scale from
+        max_denominator (int): Maximum denominator for fraction approximation
+    
+    Returns:
+        tuple: Suggested supercell dimensions (N1, N2, N3)
+    """
+    from fractions import Fraction
+    
+    # Start with base supercell
+    supercell_dims = list(base_supercell)
+    
+    if all(abs(q) < 1e-6 for q in q_point_frac):
+        print("Q-point is Gamma (0,0,0). Using base supercell.")
+        return tuple(supercell_dims)
+    
+    for i, q_comp in enumerate(q_point_frac):
+        if abs(q_comp) < 1e-6:
+            # Keep base dimension for zero component
+            continue
+        
+        try:
+            fraction = Fraction(q_comp).limit_denominator(max_denominator)
+            required_multiple = fraction.denominator
+            # Scale the base dimension to be commensurate
+            supercell_dims[i] = base_supercell[i] * required_multiple
+        except Exception as e:
+            print(f"Error processing q-component {q_comp}: {e}. Using base dimension.")
+    
+    result = tuple(supercell_dims)
+    print(f"Estimated commensurate supercell for q-point {q_point_frac} with base {base_supercell}: {result}")
+    return result
+
+def estimate_commensurate_supercell_size(q_point_frac, max_denominator=10):
+    """
+    Estimates the smallest integer supercell dimensions (N1, N2, N3)
+    that are commensurate with the given q-point in fractional reciprocal coordinates.
+    This means the q-point will fold to the Gamma point in the supercell.
+
+    Args:
+        q_point_frac (list or np.array): The q-point in fractional reciprocal coordinates
+                                          of the primitive cell, e.g., [0.5, 0.0, 0.0].
+        max_denominator (int): Maximum denominator to consider when converting to fraction.
+                                Helps prevent extremely large supercells for irrational-like q-points.
+
+    Returns:
+        tuple: A tuple (N1, N2, N3) representing the suggested supercell dimensions.
+               Returns (1,1,1) if q_point is [0,0,0] or very close to it.
+    """
+    supercell_dims = [1, 1, 1]
+    q_point_frac = np.array(q_point_frac)
+
+    if np.allclose(q_point_frac, [0.0, 0.0, 0.0], atol=1e-6):
+        print("Q-point is Gamma (0,0,0). Smallest commensurate supercell is (1,1,1).")
+        return (1, 1, 1)
+
+    for i, q_comp in enumerate(q_point_frac):
+        # Handle components very close to 0 or 1 (or other integers)
+        if np.isclose(q_comp % 1.0, 0.0, atol=1e-6):
+            supercell_dims[i] = 1
+            continue
+
+        # Convert to fraction to find the smallest denominator
+        try:
+            fraction = Fraction(q_comp).limit_denominator(max_denominator)
+            supercell_dims[i] = fraction.denominator
+        except OverflowError:
+            print(f"Warning: Could not find a simple fraction for q-component {q_comp}. "
+                  f"Consider increasing max_denominator or checking q-point validity.")
+            supercell_dims[i] = max_denominator # Fallback to max_denominator
+        except Exception as e:
+            print(f"Error processing q-component {q_comp}: {e}. Setting supercell dim to 1.")
+            supercell_dims[i] = 1 # Default to 1 on error
+
+    print(f"Estimated smallest commensurate supercell for q-point {q_point_frac}: {tuple(supercell_dims)}")
+    return tuple(supercell_dims)
+
 
 def generate_displaced_supercells(primitive_atoms,
                                   softest_modes_info_list, # Changed to a list of mode infos
-                                  scale_mode1,             # New: Single scale for mode 1
+                                  scale_mode1,             # Scaling factor for mode 1 displacements
                                   ratio_mode2_to_mode1,    # Single ratio for mode 2
                                   supercell_variants,
                                   output_base_dir,
                                   iteration_idx,
                                   original_prefix,
-                                  cell_transformation_vector): # 6-element vector
-   """
-   Generates supercells displaced along a combination of soft phonon modes
-   with flexible cell parameter transformations.
-
-   Args:
-      primitive_atoms (ase.atoms.Atoms): The primitive cell structure.
-      softest_modes_info_list (list): A list containing dictionaries for the softest mode
-                                       (index 0) and potentially the second softest mode (index 1).
-                                       Each dict includes 'raw_displacements'.
-      scale_mode1 (float): The scaling factor for the raw displacements of the first softest mode.
-      ratio_mode2_to_mode1 (float): Ratio of displacement magnitude of mode 2 to mode 1.
-      supercell_variants (list): List of tuples defining supercell sizes, e.g., [(2,1,1), (2,2,2)].
-      output_base_dir (str): The main output directory.
-      iteration_idx (int): The current iteration number.
-      original_prefix (str): The base filename prefix of the original structure.
-      cell_transformation_vector (tuple): A 6-element tuple (scale_a, scale_b, scale_c,
-                                          scale_alpha, scale_beta, scale_gamma) for cell transformation.
-
-   Returns:
-      list: A list of paths to the generated displaced CIF files.
-   """
-   print(f"\n--- Generating Displaced Supercells (Iteration {iteration_idx}) ---")
-
-   # Extract mode info from the list
-   softest_mode_info_1 = softest_modes_info_list[0] if softest_modes_info_list else None
-   softest_mode_info_2 = softest_modes_info_list[1] if len(softest_modes_info_list) > 1 else None
-
-   if softest_mode_info_1 is None:
-       print("Error: No softest mode information provided. Cannot generate displaced structures.")
-       return []
-
-   soft_mode_1_label = softest_mode_info_1.get('label', 'unknown_1')
-   soft_mode_2_label = softest_mode_info_2.get('label', 'unknown_2') if softest_mode_info_2 else 'none'
-
-   # Create a more descriptive directory name for the iteration
-   iteration_dir = os.path.join(output_base_dir, f"iteration_{iteration_idx}")
-   os.makedirs(iteration_dir, exist_ok=True)
-   print(f"Created directory for iteration {iteration_idx}: {iteration_dir}")
-
-   raw_displacements_1 = np.array(softest_mode_info_1['raw_displacements'])
-   num_atoms_primitive = len(primitive_atoms)
-
-   max_raw_disp_magnitude_1 = np.max(np.linalg.norm(raw_displacements_1, axis=1))
-
-   if max_raw_disp_magnitude_1 < 1e-6:
-      print("Warning: Softest mode 1 displacements are zero or very small. Cannot generate displaced structures.")
-      # If mode 1 is zero, and mode 2 is also zero or not present, return empty
-      if softest_mode_info_2 is None or np.max(np.linalg.norm(np.array(softest_mode_info_2['raw_displacements']), axis=1)) < 1e-6:
-          return []
-
-   normalized_displacements_1 = raw_displacements_1 / max_raw_disp_magnitude_1
-
-   normalized_displacements_2 = None
-   max_raw_disp_magnitude_2 = 0.0
-   if softest_mode_info_2:
-       raw_displacements_2 = np.array(softest_mode_info_2['raw_displacements'])
-       max_raw_disp_magnitude_2 = np.max(np.linalg.norm(raw_displacements_2, axis=1))
-       if max_raw_disp_magnitude_2 > 1e-6:
-           normalized_displacements_2 = raw_displacements_2 / max_raw_disp_magnitude_2
-       else:
-           print("Warning: Second softest mode displacements are zero or very small. Will not combine.")
-
-
-   generated_files = []
-
-   # Ensure primitive_atoms is an ASE Atoms object
-   if not isinstance(primitive_atoms, Atoms):
-       print(f"Attempting forceful conversion of primitive_atoms from {type(primitive_atoms)} to ase.atoms.Atoms...")
-       primitive_atoms = Atoms(
-           symbols=primitive_atoms.get_chemical_symbols(),
-           positions=primitive_atoms.get_positions(),
-           cell=primitive_atoms.get_cell(),
-           pbc=primitive_atoms.get_pbc()
-       )
-       print(f"Forceful conversion complete. New primitive_atoms type: {type(primitive_atoms)}")
-
-   # Apply cell transformation to the primitive cell first
-   transformed_primitive_atoms = primitive_atoms.copy()
-   original_cell_params = transformed_primitive_atoms.get_cell().cellpar() # (a, b, c, alpha, beta, gamma)
-
-   scale_a, scale_b, scale_c, scale_alpha, scale_beta, scale_gamma = cell_transformation_vector
-
-   new_a = original_cell_params[0] * (1.0 + scale_a)
-   new_b = original_cell_params[1] * (1.0 + scale_b)
-   new_c = original_cell_params[2] * (1.0 + scale_c)
-   new_alpha = original_cell_params[3] + scale_alpha
-   new_beta = original_cell_params[4] + scale_beta
-   new_gamma = original_cell_params[5] + scale_gamma
-
-   # --- START MODIFICATION FOR ROBUST ANGLE HANDLING ---  
+                                  cell_transformation_vector, # 6-element vector
+                                  use_phase_factor=True,   # NEW PARAMETER
+                                  mutation_data=None):     # NEW PARAMETER for mode replacement info
+   """  
+   Generates supercells displaced along a combination of soft phonon modes  
+   with flexible cell parameter transformations, considering q-point phase factors.  
+  
+   Args:  
+      primitive_atoms (ase.atoms.Atoms): The primitive cell structure.  
+      softest_modes_info_list (list): A list containing dictionaries for the softest mode  
+                                       (index 0) and potentially the second softest mode (index 1).  
+                                       Each dict MUST include 'raw_displacements' and 'coordinate' (q_point).  
+      scale_mode1 (float): The scaling factor for the raw displacements of the first softest mode.  
+      ratio_mode2_to_mode1 (float): Ratio of displacement magnitude of mode 2 to mode 1.  
+      supercell_variants (list): List of tuples defining supercell sizes, e.g., [(2,1,1), (2,2,2)].  
+                                 It is recommended to use `estimate_commensurate_supercell_size`  
+                                 to determine appropriate supercell sizes based on the q-points.  
+      output_base_dir (str): The main output directory.  
+      iteration_idx (int): The current iteration number.  
+      original_prefix (str): The base filename prefix of the original structure.  
+      cell_transformation_vector (tuple): A 6-element tuple (scale_a, scale_b, scale_c,  
+                                          scale_alpha, scale_beta, scale_gamma) for cell transformation.  
+      use_phase_factor (bool): If True, phase factors are applied. If False, phase factors are ignored (set to 1).  
+  
+   Returns:  
+      list: A list of paths to the generated displaced CIF files.  
+   """  
+   print(f"\n--- Generating Displaced Supercells (Iteration {iteration_idx}) ---")  
+   print(f"   Use Phase Factor: {use_phase_factor}") # Log the new parameter  
+  
+   # Extract mode info from the list  
+   softest_mode_info_1 = softest_modes_info_list[0] if softest_modes_info_list else None  
+   softest_mode_info_2 = softest_modes_info_list[1] if len(softest_modes_info_list) > 1 else None  
+  
+   if softest_mode_info_1 is None:  
+       print("Error: No softest mode information provided. Cannot generate displaced structures.")  
+       return []  
+  
+   soft_mode_1_label = softest_mode_info_1.get('label', 'unknown_1')  
+   soft_mode_2_label = softest_mode_info_2.get('label', 'unknown_2') if softest_mode_info_2 else 'none'  
+  
+     
+  
+   raw_displacements_1 = np.array(softest_mode_info_1['raw_displacements'])  
+   # Use 'coordinate' key for q_point, as set in phonon_utils.py  
+   q_point_frac_1 = np.array(softest_mode_info_1.get('coordinate', [0.0, 0.0, 0.0]))  
+   if 'coordinate' not in softest_mode_info_1:  
+       print(f"Warning: 'coordinate' (q_point) not found for mode 1. Assuming Gamma point (q=[0,0,0]).")  
+  
+   num_atoms_primitive = len(primitive_atoms)  
+  
+   max_raw_disp_magnitude_1 = np.max(np.linalg.norm(raw_displacements_1, axis=1))  
+  
+   if max_raw_disp_magnitude_1 < 1e-6:  
+      print("Warning: Softest mode 1 displacements are zero or very small. Cannot generate displaced structures.")  
+      # If mode 1 is zero, and mode 2 is also zero or not present, return empty  
+      if softest_mode_info_2 is None or np.max(np.linalg.norm(np.array(softest_mode_info_2['raw_displacements']), axis=1)) < 1e-6:  
+          return []  
+  
+   # Normalize displacements. These can be complex.  
+   normalized_displacements_1 = raw_displacements_1 / max_raw_disp_magnitude_1  
+  
+   normalized_displacements_2 = None  
+   max_raw_disp_magnitude_2 = 0.0  
+   q_point_frac_2 = np.array([0.0, 0.0, 0.0])  
+   if softest_mode_info_2:  
+       raw_displacements_2 = np.array(softest_mode_info_2['raw_displacements'])  
+       q_point_frac_2 = np.array(softest_mode_info_2.get('coordinate', [0.0, 0.0, 0.0]))  
+       if 'coordinate' not in softest_mode_info_2:  
+           print(f"Warning: 'coordinate' (q_point) not found for mode 2. Assuming Gamma point (q=[0,0,0]).")  
+  
+       max_raw_disp_magnitude_2 = np.max(np.linalg.norm(raw_displacements_2, axis=1))  
+       if max_raw_disp_magnitude_2 > 1e-6:  
+           normalized_displacements_2 = raw_displacements_2 / max_raw_disp_magnitude_2  
+       else:  
+           print("Warning: Second softest mode displacements are zero or very small. Will not combine.")  
+  
+  
+   generated_files = []  
+  
+   # Ensure primitive_atoms is an ASE Atoms object  
+   if not isinstance(primitive_atoms, Atoms):  
+       print(f"Attempting forceful conversion of primitive_atoms from {type(primitive_atoms)} to ase.atoms.Atoms...")  
+       primitive_atoms = Atoms(  
+           symbols=primitive_atoms.get_chemical_symbols(),  
+           positions=primitive_atoms.get_positions(),  
+           cell=primitive_atoms.get_cell(),  
+           pbc=primitive_atoms.get_pbc()  
+       )  
+       print(f"Forceful conversion complete. New primitive_atoms type: {type(primitive_atoms)}")  
+  
+   # Apply cell transformation to the primitive cell first  
+   transformed_primitive_atoms = primitive_atoms.copy()  
+   original_cell_params = transformed_primitive_atoms.get_cell().cellpar() # (a, b, c, alpha, beta, gamma)  
+  
+   scale_a, scale_b, scale_c, scale_alpha, scale_beta, scale_gamma = cell_transformation_vector  
+  
+   new_a = original_cell_params[0] * (1.0 + scale_a)  
+   new_b = original_cell_params[1] * (1.0 + scale_b)  
+   new_c = original_cell_params[2] * (1.0 + scale_c)  
+   new_alpha = original_cell_params[3] + scale_alpha  
+   new_beta = original_cell_params[4] + scale_beta  
+   new_gamma = original_cell_params[5] + scale_gamma  
+  
+   # --- ROBUST ANGLE HANDLING ---  
    # Ensure angles are strictly positive and less than 180, with a margin  
    # This is crucial to avoid numerical issues that lead to cz_sqr < 0  
    angle_min_bound = 5.0 # Keep angles at least 5 degrees away from 0  
@@ -224,9 +363,7 @@ def generate_displaced_supercells(primitive_atoms,
    new_cell_params = (new_a, new_b, new_c, new_alpha, new_beta, new_gamma)  
   
    try:  
-       from ase.geometry.cell import cellpar_to_cell
        # Attempt to create the cell matrix. This is where the AssertionError happens.  
-       # We use cellpar_to_cell directly to catch the specific AssertionError.  
        new_cell_matrix = cellpar_to_cell(new_cell_params)  
    except AssertionError:  
        print(f"Warning: Generated cell parameters are unphysical for sample {original_prefix} "  
@@ -238,109 +375,290 @@ def generate_displaced_supercells(primitive_atoms,
    except Exception as e:  
        print(f"An unexpected error occurred while creating cell matrix for sample {original_prefix}: {e}. Skipping this sample.")  
        return []  
-   # --- END MODIFICATION FOR ROBUST ANGLE HANDLING ---
-
-   transformed_primitive_atoms.set_cell(new_cell_matrix, scale_atoms=True) # scale_atoms=True moves atoms proportionally
-
-   # Create labels for the cell transformation vector for filename
-   cell_transform_labels = []
-   for val in cell_transformation_vector:
-       if val == 0:
-           cell_transform_labels.append("000")
-       else:
-           # Format as 'p050' for +0.05, 'm020' for -0.02, 'p005' for +0.005
-           # Using 3 decimal places for precision in filename
-           cell_transform_labels.append(f"{'m' if val < 0 else 'p'}{abs(int(val*1000)):03d}")
-   cell_transform_str = "_".join(cell_transform_labels)
-
-
-   for supercell_variant in supercell_variants:
-      sc_n1, sc_n2, sc_n3 = supercell_variant
-      supercell_dir = os.path.join(iteration_dir, f"supercell_{sc_n1}x{sc_n2}x{sc_n3}")
-      os.makedirs(supercell_dir, exist_ok=True)
-      print(f"  Created directory for supercell variant: {supercell_dir}")
-
-      supercell_variant_matrix = np.diag(np.array(supercell_variant))
-      # Create supercell from the *transformed* primitive atoms
-      supercell_atoms_base = make_supercell(transformed_primitive_atoms, supercell_variant_matrix)
-      num_atoms_supercell = len(supercell_atoms_base)
-
-      primitive_positions = transformed_primitive_atoms.get_positions()
-      primitive_cell = transformed_primitive_atoms.get_cell()
-      primitive_symbols = transformed_primitive_atoms.get_chemical_symbols()
-
-      primitive_to_supercell_indices = [[] for _ in range(num_atoms_primitive)]
-
-      # Map supercell atoms back to their original primitive cell atom index
-      # This is crucial for applying primitive cell displacements to supercell atoms
-      for i_sc in range(num_atoms_supercell):
-          pos_sc = supercell_atoms_base.get_positions()[i_sc]
-          symbol_sc = supercell_atoms_base.get_chemical_symbols()[i_sc]
-
-          # Use scaled_positions to map supercell atom back to primitive cell fractional coordinates
-          f_prim = primitive_cell.scaled_positions(pos_sc)
-
-          # Wrap fractional coordinates to [0, 1) range
-          f_prim_wrapped = f_prim % 1.0
-          # Handle floating point inaccuracies near 1.0, map to 0.0
-          f_prim_wrapped = np.where(np.isclose(f_prim_wrapped, 1.0), 0.0, f_prim_wrapped)
-
-          found_match = False
-          for i_prim in range(num_atoms_primitive):
-              pos_prim_orig = primitive_positions[i_prim]
-              symbol_prim_orig = primitive_symbols[i_prim]
-
-              if symbol_sc == symbol_prim_orig:
-                  f_prim_orig = primitive_cell.scaled_positions(pos_prim_orig)
-                  # Compare wrapped fractional coordinates
-                  if np.allclose(f_prim_wrapped, f_prim_orig % 1.0, atol=1e-4): # Compare wrapped original too
-                      primitive_to_supercell_indices[i_prim].append(i_sc)
-                      found_match = True
-                      break
-
-          if not found_match:
-               print(f"Warning: Could not map supercell atom {i_sc} ({symbol_sc}) at {pos_sc} to a primitive atom.")
-
-
-      displaced_atoms = supercell_atoms_base.copy()
-      total_displacements_for_this_sample = np.zeros_like(supercell_atoms_base.get_positions())
-
-      for i_prim in range(num_atoms_primitive):
-           # Calculate displacement for mode 1
-           disp_mode1_vector = normalized_displacements_1[i_prim] * scale_mode1 * max_raw_disp_magnitude_1
-
-           # Calculate displacement for mode 2, if available
-           disp_mode2_vector = np.zeros(3)
-           if normalized_displacements_2 is not None:
-               # Scale mode 2 displacement by ratio_mode2_to_mode1 and also by scale_mode1
-               # Note: The problem statement implies ratio_mode2_to_mode1 scales the *magnitude*
-               # of mode 2 relative to mode 1's *magnitude*.
-               # So, total_disp = (scale_mode1 * normalized_disp_mode1) + (scale_mode1 * ratio_mode2_to_mode1 * normalized_disp_mode2)
-               # This means the effective scale for mode 2 is (scale_mode1 * ratio_mode2_to_mode1)
-               disp_mode2_vector = normalized_displacements_2[i_prim] * (scale_mode1 * ratio_mode2_to_mode1) * max_raw_disp_magnitude_2
-
-           # Combine displacements
-           combined_disp_vector = disp_mode1_vector + disp_mode2_vector
-
-           for i_sc in primitive_to_supercell_indices[i_prim]:
-                total_displacements_for_this_sample[i_sc] = combined_disp_vector
-
-      displaced_atoms.set_positions(displaced_atoms.get_positions() + total_displacements_for_this_sample)
-
+  
+   transformed_primitive_atoms.set_cell(new_cell_matrix, scale_atoms=True) # scale_atoms=True moves atoms proportionally  
+  
+   # Create labels for the cell transformation vector for filename  
+   cell_transform_labels = []  
+   for val in cell_transformation_vector:  
+       if val == 0:  
+           cell_transform_labels.append("000")  
+       else:  
+           # Format as 'p050' for +0.05, 'm020' for -0.02, 'p005' for +0.005  
+           # Using 3 decimal places for precision in filename  
+           cell_transform_labels.append(f"{'m' if val < 0 else 'p'}{abs(int(val*1000)):03d}")  
+   cell_transform_str = "_".join(cell_transform_labels)  
+  
+  
+   for supercell_variant in supercell_variants:  
+      sc_n1, sc_n2, sc_n3 = supercell_variant  
+        
+  
+      supercell_variant_matrix = np.diag(np.array(supercell_variant))  
+  
+      # Generate supercell without atom_map  
+      supercell_atoms_unwrapped = make_supercell(transformed_primitive_atoms, supercell_variant_matrix, wrap=False)  
+  
+      # Now, manually determine atom_map and cell_shifts_primitive_units  
+      num_atoms_supercell = len(supercell_atoms_unwrapped)  
+      atom_map = np.zeros(num_atoms_supercell, dtype=int)  
+      # Initialize cell_shifts_primitive_units correctly  
+      cell_shifts_primitive_units = np.zeros((num_atoms_supercell, 3), dtype=int)  
+  
+      # Get primitive cell positions and inverse cell matrix for fractional coordinates  
+      primitive_positions = transformed_primitive_atoms.get_positions()  
+      primitive_cell_inv = np.linalg.inv(transformed_primitive_atoms.get_cell())  
+  
+      for i_sc in range(num_atoms_supercell):  
+          pos_sc_unwrapped = supercell_atoms_unwrapped.get_positions()[i_sc]  
+  
+          # Convert supercell atom position to fractional coordinates in the primitive cell basis  
+          # This gives us (primitive_atom_frac_pos + cell_shift_frac_pos)  
+          frac_pos_in_primitive_basis = np.dot(pos_sc_unwrapped, primitive_cell_inv)  
+  
+          # Find the closest primitive atom by checking the fractional part  
+          # The fractional part should be close to one of the primitive atom's fractional positions  
+          min_dist = float('inf')  
+          best_prim_idx = -1  
+          for j_prim in range(num_atoms_primitive):  
+              prim_frac_pos = np.dot(primitive_positions[j_prim], primitive_cell_inv)  
+              # Calculate the difference in fractional coordinates, wrapping around 0 and 1  
+              diff_frac = frac_pos_in_primitive_basis - prim_frac_pos  
+              diff_frac_wrapped = diff_frac - np.round(diff_frac) # This gives the "wrapped" difference  
+  
+              dist = np.linalg.norm(diff_frac_wrapped)  
+              if dist < min_dist:  
+                  min_dist = dist  
+                  best_prim_idx = j_prim  
+  
+          atom_map[i_sc] = best_prim_idx  
+  
+          # Calculate the integer cell shift (R_n) for this supercell atom  
+          # R_n = (supercell_atom_unwrapped_pos - primitive_atom_original_pos) in primitive cell basis  
+          # This is the integer part of frac_pos_in_primitive_basis - primitive_atom_frac_pos  
+          prim_frac_pos_of_matched_atom = np.dot(primitive_positions[best_prim_idx], primitive_cell_inv)  
+          # Corrected assignment: use the initialized array name  
+          cell_shifts_primitive_units[i_sc] = np.round(frac_pos_in_primitive_basis - prim_frac_pos_of_matched_atom).astype(int)  
+  
+  
+      # Now, wrap the supercell atoms for actual structure representation  
+      supercell_atoms_base = supercell_atoms_unwrapped.copy()  
+      supercell_atoms_base.wrap(pbc=True) # Wrap positions back into the cell  
+  
+      displaced_atoms = supercell_atoms_base.copy()  
+      total_displacements_for_this_sample = np.zeros_like(supercell_atoms_base.get_positions(), dtype=complex) # Use complex for intermediate calculations  
+  
+      for i_sc in range(num_atoms_supercell):  
+           prim_idx = atom_map[i_sc] # Get the original primitive atom index for this supercell atom  
+  
+           # Get the pre-calculated integer cell shift (n1, n2, n3) for this supercell atom  
+           # Corrected access: use the initialized array name  
+           cell_shift_primitive_units_i_sc = cell_shifts_primitive_units[i_sc]  
+  
+           # Calculate phase factor for mode 1  
+           phase_factor_1 = 1.0 # Default to 1 if use_phase_factor is False  
+           if use_phase_factor:  
+               dot_product_1 = np.dot(q_point_frac_1, cell_shift_primitive_units_i_sc)  
+               phase_factor_1 = np.exp(1j * 2 * np.pi * dot_product_1)  
+  
+           # Calculate displacement for mode 1 (can be complex)  
+           disp_mode1_vector_complex = normalized_displacements_1[prim_idx] * scale_mode1 * max_raw_disp_magnitude_1 * phase_factor_1  
+  
+           # Calculate displacement for mode 2, if available (can be complex)  
+           disp_mode2_vector_complex = np.zeros(3, dtype=complex)  
+           if normalized_displacements_2 is not None:  
+               phase_factor_2 = 1.0 # Default to 1 if use_phase_factor is False  
+               if use_phase_factor:  
+                   dot_product_2 = np.dot(q_point_frac_2, cell_shift_primitive_units_i_sc)  
+                   phase_factor_2 = np.exp(1j * 2 * np.pi * dot_product_2)  
+  
+               disp_mode2_vector_complex = normalized_displacements_2[prim_idx] * (scale_mode1 * ratio_mode2_to_mode1) * max_raw_disp_magnitude_2 * phase_factor_2  
+  
+           # Combine complex displacements  
+           combined_disp_vector_complex = disp_mode1_vector_complex + disp_mode2_vector_complex  
+  
+           # Store the real part for the final physical displacement  
+           total_displacements_for_this_sample[i_sc] = combined_disp_vector_complex  
+  
+      # Apply the real part of the total displacements to the supercell atoms  
+      displaced_atoms.set_positions(displaced_atoms.get_positions() + np.real(total_displacements_for_this_sample))  
+  
       # Filename convention update
       # d1 for displacement scale of mode 1
       # r21 for ratio of mode 2 to mode 1
       # c_ for cell transformation vector
+      # pf_ for phase factor status
+      # mr_ for mode replacement info (if applicable)
       # Using f-strings for precise formatting of floats in filename
-      filename = (f"{original_prefix}_d1_{scale_mode1:.3f}_r21_{ratio_mode2_to_mode1:.3f}_c_{cell_transform_str}.cif")
-      filepath = os.path.join(supercell_dir, filename)
+
+      # Add mode replacement info to filename if available
+      mode_replacement_str = ""
+      if mutation_data and mutation_data.get('mode_replaced', False) and mutation_data.get('selected_mode'):
+          selected_mode = mutation_data['selected_mode']
+          # Format: mr_LABEL_bIDX_fFREQ (e.g., mr_M_b2_fm1p234 for M point, band 2, -1.234 THz)
+          freq_str = f"{'m' if selected_mode['frequency'] < 0 else 'p'}{abs(selected_mode['frequency']):.3f}".replace('.', 'p')
+          mode_replacement_str = f"_mr_{selected_mode['label']}_b{selected_mode['band_index']}_f{freq_str}"
+
+      filename = (f"{original_prefix}_sc_{sc_n1}x{sc_n2}x{sc_n3}_d1_{scale_mode1:.3f}_r21_{ratio_mode2_to_mode1:.3f}_c_{cell_transform_str}_pf_{str(use_phase_factor).lower()}{mode_replacement_str}.cif")
+      filepath = os.path.join(output_base_dir, filename)
       write(filepath, displaced_atoms) # displaced_atoms already has the cell transformation applied
       generated_files.append(filepath)
 
-      filename_xyz = (f"{original_prefix}_d1_{scale_mode1:.3f}_r21_{ratio_mode2_to_mode1:.3f}_c_{cell_transform_str}.xyz")
-      filepath_xyz = os.path.join(supercell_dir, filename_xyz)
+      filename_xyz = (f"{original_prefix}_sc_{sc_n1}x{sc_n2}x{sc_n3}_d1_{scale_mode1:.3f}_r21_{ratio_mode2_to_mode1:.3f}_c_{cell_transform_str}_pf_{str(use_phase_factor).lower()}{mode_replacement_str}.xyz")
+      filepath_xyz = os.path.join(output_base_dir, filename_xyz)
       write(filepath_xyz, displaced_atoms)
-      print(f"  Generated {filename} and {filename_xyz}")
 
+      # Enhanced logging for mode replacement
+      if mutation_data and mutation_data.get('mode_replaced', False):
+          selected_mode = mutation_data['selected_mode']
+          print(f"  Generated {filename} and {filename_xyz}")
+          print(f"    MODE REPLACEMENT: Second mode replaced with {selected_mode['label']} point, band {selected_mode['band_index']}, frequency {selected_mode['frequency']:.3f} THz")
+      else:
+          print(f"  Generated {filename} and {filename_xyz}")
+  
    print("Finished generating displaced supercells with combined modes and cell transformations.")
    return generated_files
+
+
+def generate_random_displaced_structures(primitive_atoms,
+                                       displacement_bounds,
+                                       supercell_variants,
+                                       output_base_dir,
+                                       iteration_idx,
+                                       original_prefix,
+                                       cell_transformation_vector=None,
+                                       cell_perturbation=True,
+                                       random_seed=None):
+    """
+    Generates structures with random atomic displacements and optional cell perturbations.
+
+    Args:
+        primitive_atoms (ase.atoms.Atoms): The primitive cell structure.
+        displacement_bounds (list): [min_displacement, max_displacement] in Angstroms.
+        supercell_variants (list): List of tuples defining supercell sizes, e.g., [(2,2,2), (3,3,3)].
+        output_base_dir (str): The main output directory.
+        iteration_idx (int): Current iteration index for naming.
+        original_prefix (str): Prefix for output filenames.
+        cell_transformation_vector (tuple): 6-element vector for cell parameter changes.
+        cell_perturbation (bool): Whether to apply random cell perturbations.
+        random_seed (int): Random seed for reproducibility.
+
+    Returns:
+        list: A list of paths to the generated random CIF files.
+    """
+    import numpy as np
+    import random
+    from ase.io import write
+    from ase.geometry.cell import cellpar_to_cell
+
+    print(f"\n--- Generating Random Displaced Structures (Iteration {iteration_idx}) ---")
+
+    if random_seed is not None:
+        np.random.seed(random_seed)
+        random.seed(random_seed)
+        print(f"   Random seed set to: {random_seed}")
+
+    generated_files = []
+    min_disp, max_disp = displacement_bounds
+
+    print(f"   Displacement bounds: [{min_disp:.3f}, {max_disp:.3f}] Å")
+    print(f"   Cell perturbation: {cell_perturbation}")
+    print(f"   Supercell variants: {supercell_variants}")
+
+    for supercell_variant in supercell_variants:
+        sc_n1, sc_n2, sc_n3 = supercell_variant
+
+        # Create supercell
+        supercell_atoms = primitive_atoms.repeat((sc_n1, sc_n2, sc_n3))
+
+        # Apply cell transformation if provided
+        if cell_transformation_vector is not None:
+            try:
+                # Get original cell parameters
+                original_cell_params = supercell_atoms.cell.cellpar()
+
+                # Apply transformations: [a_scale, b_scale, c_scale, alpha_change, beta_change, gamma_change]
+                new_cell_params = original_cell_params.copy()
+                new_cell_params[0] *= (1.0 + cell_transformation_vector[0])  # a
+                new_cell_params[1] *= (1.0 + cell_transformation_vector[1])  # b
+                new_cell_params[2] *= (1.0 + cell_transformation_vector[2])  # c
+                new_cell_params[3] += cell_transformation_vector[3]  # alpha
+                new_cell_params[4] += cell_transformation_vector[4]  # beta
+                new_cell_params[5] += cell_transformation_vector[5]  # gamma
+
+                # Create new cell matrix
+                new_cell_matrix = cellpar_to_cell(new_cell_params)
+                supercell_atoms.set_cell(new_cell_matrix, scale_atoms=True)
+
+            except (AssertionError, Exception) as e:
+                print(f"Warning: Cell transformation failed for supercell {supercell_variant}: {e}")
+                print("Continuing with original cell parameters.")
+
+        # Apply additional random cell perturbations if enabled
+        if cell_perturbation:
+            try:
+                current_cell_params = supercell_atoms.cell.cellpar()
+
+                # Small random perturbations to cell parameters (±2% for lengths, ±2° for angles)
+                cell_scale_perturbations = np.random.uniform(-0.02, 0.02, 3)
+                angle_perturbations = np.random.uniform(-2.0, 2.0, 3)
+
+                perturbed_cell_params = current_cell_params.copy()
+                perturbed_cell_params[0] *= (1.0 + cell_scale_perturbations[0])  # a
+                perturbed_cell_params[1] *= (1.0 + cell_scale_perturbations[1])  # b
+                perturbed_cell_params[2] *= (1.0 + cell_scale_perturbations[2])  # c
+                perturbed_cell_params[3] += angle_perturbations[0]  # alpha
+                perturbed_cell_params[4] += angle_perturbations[1]  # beta
+                perturbed_cell_params[5] += angle_perturbations[2]  # gamma
+
+                perturbed_cell_matrix = cellpar_to_cell(perturbed_cell_params)
+                supercell_atoms.set_cell(perturbed_cell_matrix, scale_atoms=True)
+
+            except (AssertionError, Exception) as e:
+                print(f"Warning: Random cell perturbation failed for supercell {supercell_variant}: {e}")
+                print("Continuing without additional cell perturbation.")
+
+        # Generate random atomic displacements
+        num_atoms = len(supercell_atoms)
+
+        # Random displacement magnitudes for each atom
+        displacement_magnitudes = np.random.uniform(min_disp, max_disp, num_atoms)
+
+        # Random displacement directions (unit vectors)
+        displacement_directions = np.random.randn(num_atoms, 3)
+        displacement_directions = displacement_directions / np.linalg.norm(displacement_directions, axis=1, keepdims=True)
+
+        # Calculate total displacements
+        total_displacements = displacement_directions * displacement_magnitudes[:, np.newaxis]
+
+        # Apply displacements to atomic positions
+        displaced_positions = supercell_atoms.get_positions() + total_displacements
+        supercell_atoms.set_positions(displaced_positions)
+
+        # Wrap atoms back into the unit cell
+        supercell_atoms.wrap(pbc=True)
+
+        # Generate filename using GA-style naming convention
+        cell_transform_str = "none"
+        if cell_transformation_vector is not None:
+            cell_transform_str = "_".join([f"{x:.3f}" for x in cell_transformation_vector])
+
+        # Use GA-style naming: similar to displaced supercells but with random prefix
+        filename = (f"{original_prefix}_random_sc_{sc_n1}x{sc_n2}x{sc_n3}_"
+                   f"disp_{min_disp:.3f}to{max_disp:.3f}_"
+                   f"c_{cell_transform_str}.cif")
+
+        filepath = os.path.join(output_base_dir, filename)
+        write(filepath, supercell_atoms)
+        generated_files.append(filepath)
+
+        # Also save as XYZ for convenience
+        filename_xyz = filename.replace('.cif', '.xyz')
+        filepath_xyz = os.path.join(output_base_dir, filename_xyz)
+        write(filepath_xyz, supercell_atoms)
+
+        print(f"   Generated random structure: {os.path.basename(filepath)}")
+
+    print(f"Generated {len(generated_files)} random displaced structure files.")
+    return generated_files
+

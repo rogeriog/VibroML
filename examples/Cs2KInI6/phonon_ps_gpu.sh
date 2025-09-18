@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=vibroml_phonons
-#SBATCH --time=10:00:00
+#SBATCH --time=24:00:00
 #SBATCH --output=log_phonons.txt
 #SBATCH --nodes=1
 #SBATCH --mem-per-cpu=40000
@@ -18,7 +18,6 @@ conda activate /auto/globalscratch/users/r/g/rgouvea/vibroml_env
 #export PYTHONUSERBASE=intentionally-disabled  ##it was loading local modnet...
 echo "start"
 date
-
-vibroml --cif Cs2KInI6.cif --auto --soft_mode_num_top_structures_to_analyze 10
+vibroml --cif Cs2KInI6.cif --auto --method ga
 echo "--- Calculation Done ---"
 date
