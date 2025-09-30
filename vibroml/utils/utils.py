@@ -180,7 +180,12 @@ def get_arg_parser_and_settings():
         "random_displacement_bounds": default_settings.get("random_displacement_bounds", [0.1, 2.0]),
         "random_cell_perturbation": default_settings.get("random_cell_perturbation", True),
         "random_seed": default_settings.get("random_seed", None),
-        "decomposition_threshold": default_settings.get("decomposition_threshold", 0.5)
+        "decomposition_threshold": default_settings.get("decomposition_threshold", 0.5),
+        "md_temperature": default_settings.get("md_temperature", 300.0),
+        "md_pressure": default_settings.get("md_pressure", 0.0),
+        "md_time": default_settings.get("md_time", 10.0),
+        "md_supercell_size": default_settings.get("md_supercell_size", "2x2x2"),
+        "md_equilibration_fraction": default_settings.get("md_equilibration_fraction", 0.2)
     }
 
     parser = argparse.ArgumentParser(description="Calculate phonon band structure and DOS for crystal structures, with optional relaxation and soft mode analysis.")
@@ -195,7 +200,7 @@ def get_arg_parser_and_settings():
     parser.add_argument("--fmax", type=float, default=settings["default_fmax"], help=f"Max force tolerance for relaxation (default: {settings['default_fmax']} eV/Å).")
     parser.add_argument("--relaxation-patience", type=int, default=5, help="Number of initial relaxation steps to wait before applying energy drop termination criteria (default: 5). Increase this value (e.g., 30) if structures fail during initial relaxation due to large energy changes.")
     parser.add_argument("--auto", action="store_true", help="Automatically run parameter sweep and soft mode optimization.")
-    parser.add_argument("--method", type=str, default=settings["default_method"], choices=["ga", "traditional", "traditional_all", "opt_random"], help=f"Method for soft mode optimization (default: {settings['default_method']}).")
+    parser.add_argument("--method", type=str, default=settings["default_method"], choices=["ga", "traditional", "traditional_all", "opt_random", "neb", "ci_neb", "md_stability"], help=f"Method for soft mode optimization (default: {settings['default_method']}).")
     parser.add_argument("--output-prefix", type=str, default=None, help="Optional custom prefix to add before the structure name in output folder names.")
 
     # --- CORRECTED ARGUMENTS: default=None for nargs='+' arguments ---
@@ -233,6 +238,49 @@ def get_arg_parser_and_settings():
                     help=f'Energy threshold (in eV) below reference energy for flagging structures as decomposed. '
                          f'Structures with E_relax < E_ref - decomposition_threshold are flagged as DECOMPOSED. '
                          f'Default: {settings["decomposition_threshold"]} eV')
+
+    # NEB-specific arguments
+    parser.add_argument('--final_cif', type=str, default=None,
+                    help='Path to the final CIF structure for NEB/CI-NEB methods. Required when using NEB or CI-NEB methods.')
+    parser.add_argument('--neb_num_images', type=int, default=10,
+                    help='Number of intermediate images for NEB/CI-NEB (default: 10). Total path will have num_images+2 structures (including initial and final).')
+    parser.add_argument('--neb_spring_constant', type=float, default=5.0,
+                    help='Spring constant for NEB method (default: 5.0 eV/Å²).')
+    parser.add_argument('--neb_max_iterations', type=int, default=1000,
+                    help='Maximum number of NEB optimization iterations (default: 1000).')
+    parser.add_argument('--neb_force_tolerance', type=float, default=0.01,
+                    help='Force tolerance for NEB convergence (default: 0.01 eV/Å).')
+    parser.add_argument('--neb_climbing_start_iteration', type=int, default=50,
+                    help='Iteration to start climbing image in CI-NEB (default: 50). Only applies to CI-NEB method.')
+
+    # Optional YAML file saving
+    parser.add_argument('--save-yaml', action='store_true', default=False,
+                    help='Save YAML files during phonon analysis. By default, YAML files are NOT saved to reduce file size overhead.')
+
+    # Optional phonon calculations for NEB methods
+    parser.add_argument('--with-phonon', action='store_true', default=False,
+                    help='Include phonon calculations in NEB methods. By default, NEB methods only perform NEB optimization without phonon analysis.')
+
+    # MD stability-specific arguments
+    parser.add_argument('--temp', type=float, default=settings["md_temperature"],
+                    help=f'Simulation temperature in Kelvin for MD stability analysis (default: {settings["md_temperature"]} K).')
+    parser.add_argument('--pressure', type=float, default=settings["md_pressure"],
+                    help=f'Simulation pressure in GPa for MD stability analysis (default: {settings["md_pressure"]} GPa).')
+    parser.add_argument('--time', type=float, default=settings["md_time"],
+                    help=f'Total simulation time in picoseconds for MD stability analysis (default: {settings["md_time"]} ps).')
+    parser.add_argument('--supercell-size', type=str, default=settings["md_supercell_size"],
+                    help=f'Supercell dimensions as "NxNxN" format for MD stability analysis (default: {settings["md_supercell_size"]}).')
+    parser.add_argument('--equilibration-fraction', type=float, default=settings["md_equilibration_fraction"],
+                    help=f'Fraction of total time for equilibration in MD stability analysis (default: {settings["md_equilibration_fraction"]}).')
+
+    # MD stability assessment thresholds (generous defaults for MLIP fluctuations)
+    parser.add_argument('--volume-threshold', type=float, default=6.0,
+                    help='Volume fluctuation threshold as percentage of average volume for stability assessment (default: 4.0%%. Generous threshold accounts for MLIP fluctuations).')
+    parser.add_argument('--rmsd-threshold', type=float, default=1.0,
+                    help='RMSD threshold in Angstroms for structural stability assessment (default: 1.0 Å. Generous threshold accounts for MLIP fluctuations).')
+    parser.add_argument('--rdf-threshold', type=float, default=0.5,
+                    help='RDF correlation threshold for structural integrity assessment (default: 0.5. Lower threshold accounts for MLIP fluctuations).')
+
     return parser, settings
 
 def save_raw_data(bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, supercell_dims, delta, fmax, output_dir):  

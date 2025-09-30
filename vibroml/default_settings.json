@@ -26,5 +26,10 @@
     "default_method": "ga",
     "random_displacement_bounds": [0.1, 2.0],
     "random_cell_perturbation": true,
-    "random_seed": null
+    "random_seed": null,
+    "md_temperature": 300.0,
+    "md_pressure": 0.0,
+    "md_time": 20.0,
+    "md_supercell_size": "2x2x2",
+    "md_equilibration_fraction": 0.2
 }
