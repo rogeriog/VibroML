@@ -3,6 +3,7 @@
   <img src="logo/VibroML.png" alt="VibroML Logo" width="300px" height="150px">
 </div>
 <h3 align="center">AI-Powered Vibrational Analysis & Stability Suite</h3>
+
 [![PyPI Version](https://img.shields.io/pypi/v/vibroml.svg)](https://pypi.org/project/vibroml/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ### Overview
