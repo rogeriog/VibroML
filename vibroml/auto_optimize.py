@@ -3,16 +3,22 @@ import sys
 import json
 import time
 
-from .utils.structure_utils import initialize_calculator, generate_displaced_supercells, estimate_commensurate_supercell_size, generate_random_displaced_structures
+from .utils.structure_utils import initialize_calculator, generate_displaced_supercells, estimate_commensurate_supercell_size, generate_random_displaced_structures, load_structure
 from .utils.relaxation_utils import relax_structure, relax_structures_in_folder, find_lowest_energy_structures
 from .utils.phonon_utils import run_single_phonon_analysis
+from .utils.neb_utils import run_neb_optimization, generate_enhanced_neb_summary
+from .utils.md_utils import (prepare_md_supercell, setup_nvt_ensemble, setup_npt_ensemble,
+                            temperature_ramp_callback, monitor_equilibration_convergence,
+                            analyze_trajectory_stability, analyze_energy_trajectory,
+                            determine_stability, save_trajectory_analysis_plots)
 
 
 from .utils.genetic_algorithm import GeneticAlgorithm
 
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.io.ase import AseAtomsAdaptor
-from ase.io import write
+from ase.io import write, read
+import numpy as np
 
 
 def _save_final_structure(result, output_dir, index, structure_type, original_prefix):
@@ -162,7 +168,8 @@ def run_phonon_calculation_sweep_optimization(args, output_dir, initial_atoms, c
             phonon_dos_grid=phonon_dos_grid,
             traj_kT=default_traj_kT,
             num_modes_to_return=num_modes_to_return,
-            negative_phonon_threshold=negative_phonon_threshold_thz
+            negative_phonon_threshold=negative_phonon_threshold_thz,
+            save_yaml=args.save_yaml
         )
 
         if neg_freq_at_special_point is not None:
@@ -293,6 +300,51 @@ def run_automatic_soft_mode_optimization(args, output_dir, best_negative_frequen
                 random_seed=random_seed,
                 ga_cell_scale_bounds=ga_cell_scale_bounds,
                 ga_cell_angle_bounds=ga_cell_angle_bounds,
+            )
+        elif args.method == "neb":
+            run_neb_soft_mode_optimization(
+                args,
+                output_dir,
+                best_relaxed_atoms,
+                best_softest_modes_info,
+                max_iterations=soft_mode_max_iterations,
+                soft_mode_displacement_scales=soft_mode_displacement_scales,
+                cell_scale_factors=cell_scale_factors,
+                mode2_ratio_scales=mode2_ratio_scales,
+                num_top_structures_to_analyze=soft_mode_num_top_structures_to_analyze,
+                negative_phonon_threshold_thz=negative_phonon_threshold_thz,
+                phonon_path_npoints=phonon_path_npoints,
+                phonon_dos_grid=phonon_dos_grid,
+                default_traj_kT=default_traj_kT,
+                num_modes_to_return=num_modes_to_return,
+                neb_num_images=args.neb_num_images,
+                neb_spring_constant=args.neb_spring_constant,
+                neb_max_iterations=args.neb_max_iterations,
+                neb_force_tolerance=args.neb_force_tolerance,
+                final_cif_path=args.final_cif
+            )
+        elif args.method == "ci_neb":
+            run_ci_neb_soft_mode_optimization(
+                args,
+                output_dir,
+                best_relaxed_atoms,
+                best_softest_modes_info,
+                max_iterations=soft_mode_max_iterations,
+                soft_mode_displacement_scales=soft_mode_displacement_scales,
+                cell_scale_factors=cell_scale_factors,
+                mode2_ratio_scales=mode2_ratio_scales,
+                num_top_structures_to_analyze=soft_mode_num_top_structures_to_analyze,
+                negative_phonon_threshold_thz=negative_phonon_threshold_thz,
+                phonon_path_npoints=phonon_path_npoints,
+                phonon_dos_grid=phonon_dos_grid,
+                default_traj_kT=default_traj_kT,
+                num_modes_to_return=num_modes_to_return,
+                neb_num_images=args.neb_num_images,
+                neb_spring_constant=args.neb_spring_constant,
+                neb_max_iterations=args.neb_max_iterations,
+                neb_force_tolerance=args.neb_force_tolerance,
+                neb_climbing_start_iteration=args.neb_climbing_start_iteration,
+                final_cif_path=args.final_cif
             )
         else:
             print(f"Error: Unknown soft mode optimization method: {args.method}")
@@ -737,7 +789,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 phonon_dos_grid=phonon_dos_grid,
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
-                negative_phonon_threshold=negative_phonon_threshold_thz
+                negative_phonon_threshold=negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml
             )
             # Update the guiding atoms and soft mode list for the next loop
             current_primitive_atoms = primitive_atoms_for_next_iter.copy()
@@ -875,7 +928,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structure_dir,
-                negative_phonon_threshold=negative_phonon_threshold_thz
+                negative_phonon_threshold=negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml
             )
         except Exception as e:  
             print(f"  Error during final phonon analysis for top structure {i+1}: {e}")  
@@ -908,7 +962,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                     traj_kT=default_traj_kT,
                     num_modes_to_return=num_modes_to_return,
                     final_structures_dir=final_structure_dir,
-                    negative_phonon_threshold=negative_phonon_threshold_thz
+                    negative_phonon_threshold=negative_phonon_threshold_thz,
+                    save_yaml=args.save_yaml
                 )
             except Exception as e:  
                 print(f"  Error during final phonon analysis for unique structure {i+1}: {e}")  
@@ -1277,7 +1332,8 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                 phonon_dos_grid=phonon_dos_grid,
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
-                negative_phonon_threshold=negative_phonon_threshold_thz
+                negative_phonon_threshold=negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml
             )
             current_primitive_atoms = primitive_atoms_for_next_iter.copy()
             softest_modes_info_list = next_softest_modes_info_list
@@ -1387,7 +1443,8 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structure_dir,
-                negative_phonon_threshold=negative_phonon_threshold_thz
+                negative_phonon_threshold=negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml
             )
         except Exception as e:  
             print(f"  Error during final phonon analysis for top structure {i+1}: {e}")  
@@ -1420,7 +1477,8 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                     traj_kT=default_traj_kT,
                     num_modes_to_return=num_modes_to_return,
                     final_structures_dir=final_structure_dir,
-                    negative_phonon_threshold=negative_phonon_threshold_thz
+                    negative_phonon_threshold=negative_phonon_threshold_thz,
+                    save_yaml=args.save_yaml
                 )
             except Exception as e:  
                 print(f"  Error during final phonon analysis for unique structure {i+1}: {e}")  
@@ -1600,7 +1658,8 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                 phonon_dos_grid=phonon_dos_grid,
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
-                negative_phonon_threshold=negative_phonon_threshold_thz
+                negative_phonon_threshold=negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml
             )
 
             # Identify all soft modes
@@ -2150,7 +2209,8 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structures_dir,
-                negative_phonon_threshold=negative_phonon_threshold_thz
+                negative_phonon_threshold=negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml
             )
             print(f"  Completed phonon analysis for top structure {i+1}")
 
@@ -2187,7 +2247,8 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                     traj_kT=default_traj_kT,
                     num_modes_to_return=num_modes_to_return,
                     final_structures_dir=final_structures_dir,
-                    negative_phonon_threshold=negative_phonon_threshold_thz
+                    negative_phonon_threshold=negative_phonon_threshold_thz,
+                    save_yaml=args.save_yaml
                 )
                 print(f"  Completed phonon analysis for unique structure {i+1}")
 
@@ -2222,7 +2283,8 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structure_dir,
-                negative_phonon_threshold=negative_phonon_threshold_thz
+                negative_phonon_threshold=negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml
             )
 
         except Exception as e:
@@ -2823,7 +2885,8 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structures_dir,
-                negative_phonon_threshold=negative_phonon_threshold_thz
+                negative_phonon_threshold=negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml
             )
             print(f"  Completed phonon analysis for top structure {i+1}")
 
@@ -2860,7 +2923,8 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                     traj_kT=default_traj_kT,
                     num_modes_to_return=num_modes_to_return,
                     final_structures_dir=final_structures_dir,
-                    negative_phonon_threshold=negative_phonon_threshold_thz
+                    negative_phonon_threshold=negative_phonon_threshold_thz,
+                    save_yaml=args.save_yaml
                 )
                 print(f"  Completed phonon analysis for unique structure {i+1}")
 
@@ -3024,3 +3088,931 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
     # Display summary
     with open(overall_summary_filepath, 'r') as f:
         print("\n" + f.read())
+
+
+def run_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mode_analysis, initial_softest_modes_info_list, max_iterations,
+                                  soft_mode_displacement_scales, cell_scale_factors, mode2_ratio_scales, num_top_structures_to_analyze, negative_phonon_threshold_thz,
+                                  phonon_path_npoints, phonon_dos_grid, default_traj_kT, num_modes_to_return, neb_num_images, neb_spring_constant,
+                                  neb_max_iterations, neb_force_tolerance, final_cif_path):
+    """
+    Runs NEB optimization between initial and final structures, followed by phonon analysis.
+
+    This function follows the same pattern as other optimization methods in VibroML but performs
+    NEB path optimization instead of soft mode displacement optimization.
+    """
+    print("\n--- Running NEB Soft Mode Optimization ---")
+
+    # Load final structure
+    print(f"Loading final structure from: {final_cif_path}")
+    try:
+        _, final_atoms = load_structure(final_cif_path)
+        if final_atoms is None:
+            raise ValueError(f"Could not load final structure from {final_cif_path}")
+    except Exception as e:
+        print(f"Error loading final structure: {e}")
+        return
+
+    # Initialize calculator
+    calculator = initialize_calculator(args.engine, args.model_name)
+
+    # Create output directory for NEB optimization
+    neb_output_dir = os.path.join(base_output_dir, "neb_optimization")
+    os.makedirs(neb_output_dir, exist_ok=True)
+
+    # Get original prefix for naming
+    original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
+
+    # Mandatory structure relaxation for both initial and final structures
+    print(f"\n--- Mandatory Structure Relaxation for NEB ---")
+    print("Relaxing initial structure...")
+    initial_relax_dir = os.path.join(neb_output_dir, "initial_structure_relaxation")
+    os.makedirs(initial_relax_dir, exist_ok=True)
+
+    relaxed_initial_atoms = relax_structure(
+        initial_atoms_for_soft_mode_analysis.copy(),
+        calculator,
+        args.engine,
+        args.fmax,
+        initial_relax_dir,
+        args.cif,
+        relaxation_patience=getattr(args, 'relaxation_patience', 5)
+    )
+
+    if relaxed_initial_atoms is None:
+        print("Error: Initial structure relaxation failed. Cannot proceed with NEB.")
+        return
+
+    print("Relaxing final structure...")
+    final_relax_dir = os.path.join(neb_output_dir, "final_structure_relaxation")
+    os.makedirs(final_relax_dir, exist_ok=True)
+
+    relaxed_final_atoms = relax_structure(
+        final_atoms.copy(),
+        calculator,
+        args.engine,
+        args.fmax,
+        final_relax_dir,
+        final_cif_path,
+        relaxation_patience=getattr(args, 'relaxation_patience', 5)
+    )
+
+    if relaxed_final_atoms is None:
+        print("Error: Final structure relaxation failed. Cannot proceed with NEB.")
+        return
+
+    print("Both structures successfully relaxed. Proceeding with NEB optimization.")
+
+    print(f"\n--- Starting NEB Optimization ---")
+    print(f"Initial structure: {len(relaxed_initial_atoms)} atoms (relaxed)")
+    print(f"Final structure: {len(relaxed_final_atoms)} atoms (relaxed)")
+    print(f"Number of intermediate images: {neb_num_images}")
+    print(f"Spring constant: {neb_spring_constant} eV/Å²")
+    print(f"Force tolerance: {neb_force_tolerance} eV/Å")
+    print(f"Maximum iterations: {neb_max_iterations}")
+
+    # Run NEB optimization
+    try:
+        neb_results = run_neb_optimization(
+            initial_atoms=relaxed_initial_atoms,
+            final_atoms=relaxed_final_atoms,
+            calculator=calculator,
+            num_images=neb_num_images,
+            spring_constant=neb_spring_constant,
+            max_iterations=neb_max_iterations,
+            force_tolerance=neb_force_tolerance,
+            output_dir=neb_output_dir,
+            prefix=original_prefix,
+            climbing_start_iteration=None  # Standard NEB
+        )
+    except Exception as e:
+        print(f"Error during NEB optimization: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+
+    print(f"\n--- NEB Optimization Results ---")
+    print(f"Converged: {neb_results['converged']}")
+    print(f"Final max force: {neb_results['final_max_force']:.6f} eV/Å")
+    print(f"Iterations: {neb_results['iterations']}")
+    print(f"Optimization time: {neb_results['optimization_time']:.2f} seconds")
+
+    # Generate enhanced NEB summary with force information
+    neb_params = {
+        'num_images': neb_num_images,
+        'spring_constant': neb_spring_constant,
+        'force_tolerance': neb_force_tolerance,
+        'max_iterations': neb_max_iterations
+    }
+
+    # Save summary in both locations
+    neb_summary_paths = [
+        os.path.join(neb_output_dir, "neb_summary.txt"),  # NEB optimization subdirectory
+        os.path.join(base_output_dir, "neb_summary.txt")  # Main output directory
+    ]
+
+    generate_enhanced_neb_summary(
+        results=neb_results,
+        method_name="Standard NEB",
+        args=args,
+        final_cif_path=final_cif_path,
+        neb_params=neb_params,
+        output_paths=neb_summary_paths
+    )
+
+    # Export final optimized structures to final_structures directory
+    print(f"\n--- Exporting Final NEB Structures ---")
+    final_structures_dir = os.path.join(base_output_dir, "final_structures")
+    os.makedirs(final_structures_dir, exist_ok=True)
+
+    optimized_images = neb_results['images']
+    final_energies = neb_results['final_energies']
+
+    for i, (image, energy) in enumerate(zip(optimized_images, final_energies)):
+        # Create descriptive filename with energy
+        if i == 0:
+            structure_type = "initial"
+        elif i == len(optimized_images) - 1:
+            structure_type = "final"
+        else:
+            structure_type = f"intermediate_{i:02d}"
+
+        filename = f"neb_{structure_type}_img{i:02d}_energy_{energy:.4f}eV.cif"
+        output_path = os.path.join(final_structures_dir, filename)
+
+        try:
+            write(output_path, image)
+            print(f"  Saved {structure_type} structure: {filename}")
+        except Exception as e:
+            print(f"  Error saving {structure_type} structure: {e}")
+
+    print(f"Final NEB structures exported to: {final_structures_dir}")
+
+    # Perform phonon analysis on selected images from the optimized path (if requested)
+    if args.with_phonon:
+        print(f"\n--- Running Phonon Analysis on NEB Images ---")
+    else:
+        print(f"\n--- Skipping Phonon Analysis (--with-phonon not provided) ---")
+        print("\n--- NEB Soft Mode Optimization Complete ---")
+        return
+
+    # Select images for phonon analysis (initial, final, and highest energy image)
+    images_for_phonon = []
+    final_energies = neb_results['final_energies']
+    optimized_images = neb_results['images']
+
+    # Always include initial and final
+    images_for_phonon.append((0, "initial", optimized_images[0]))
+    images_for_phonon.append((len(optimized_images)-1, "final", optimized_images[-1]))
+
+    # Find highest energy image (transition state candidate)
+    if len(final_energies) > 2:
+        # Only consider intermediate images for transition state
+        intermediate_energies = final_energies[1:-1]
+        max_energy_idx = np.argmax(intermediate_energies) + 1  # +1 to account for skipping first image
+        images_for_phonon.append((max_energy_idx, "transition_state", optimized_images[max_energy_idx]))
+
+    # Create final structures directory
+    final_structures_dir = os.path.join(base_output_dir, "final_structures")
+    os.makedirs(final_structures_dir, exist_ok=True)
+
+    # Run phonon analysis on selected images
+    for img_idx, img_type, atoms in images_for_phonon:
+        try:
+            print(f"\n--- Phonon Analysis for {img_type} image (index {img_idx}) ---")
+
+            # Create individual phonon analysis directory
+            energy_str = f"m{abs(final_energies[img_idx]):.4f}".replace('.', 'p')
+            phonon_dir = os.path.join(base_output_dir, f"final_phonon_analysis_{img_type}_img{img_idx}_energy_{energy_str}")
+
+            # Convert to primitive structure for phonon analysis
+            pmg_structure = AseAtomsAdaptor.get_structure(atoms)
+            primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(SpacegroupAnalyzer(pmg_structure).get_primitive_standard_structure())
+
+            # Run phonon analysis
+            _, _, _, _ = run_single_phonon_analysis(
+                primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units,
+                args.supercell_dims, args.delta, args.fmax, phonon_dir,
+                prefix=f"final_{original_prefix}_{img_type}_img{img_idx}_energy_{energy_str}",
+                phonon_path_npoints=phonon_path_npoints,
+                phonon_dos_grid=phonon_dos_grid,
+                traj_kT=default_traj_kT,
+                num_modes_to_return=num_modes_to_return,
+                final_structures_dir=final_structures_dir,
+                negative_phonon_threshold=negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml
+            )
+            print(f"  Completed phonon analysis for {img_type} image")
+
+        except Exception as e:
+            print(f"  Error during phonon analysis for {img_type} image: {e}")
+            import traceback
+            traceback.print_exc()
+
+    print("\n--- NEB Soft Mode Optimization Complete ---")
+
+
+def run_ci_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mode_analysis, initial_softest_modes_info_list, max_iterations,
+                                     soft_mode_displacement_scales, cell_scale_factors, mode2_ratio_scales, num_top_structures_to_analyze, negative_phonon_threshold_thz,
+                                     phonon_path_npoints, phonon_dos_grid, default_traj_kT, num_modes_to_return, neb_num_images, neb_spring_constant,
+                                     neb_max_iterations, neb_force_tolerance, neb_climbing_start_iteration, final_cif_path):
+    """
+    Runs CI-NEB optimization between initial and final structures, followed by phonon analysis.
+
+    This function follows the same pattern as other optimization methods in VibroML but performs
+    CI-NEB path optimization instead of soft mode displacement optimization.
+    """
+    print("\n--- Running CI-NEB Soft Mode Optimization ---")
+
+    # Load final structure
+    print(f"Loading final structure from: {final_cif_path}")
+    try:
+        _, final_atoms = load_structure(final_cif_path)
+        if final_atoms is None:
+            raise ValueError(f"Could not load final structure from {final_cif_path}")
+    except Exception as e:
+        print(f"Error loading final structure: {e}")
+        return
+
+    # Initialize calculator
+    calculator = initialize_calculator(args.engine, args.model_name)
+
+    # Create output directory for CI-NEB optimization
+    ci_neb_output_dir = os.path.join(base_output_dir, "ci_neb_optimization")
+    os.makedirs(ci_neb_output_dir, exist_ok=True)
+
+    # Get original prefix for naming
+    original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
+
+    # Mandatory structure relaxation for both initial and final structures
+    print(f"\n--- Mandatory Structure Relaxation for CI-NEB ---")
+    print("Relaxing initial structure...")
+    initial_relax_dir = os.path.join(ci_neb_output_dir, "initial_structure_relaxation")
+    os.makedirs(initial_relax_dir, exist_ok=True)
+
+    relaxed_initial_atoms = relax_structure(
+        initial_atoms_for_soft_mode_analysis.copy(),
+        calculator,
+        args.engine,
+        args.fmax,
+        initial_relax_dir,
+        args.cif,
+        relaxation_patience=getattr(args, 'relaxation_patience', 5)
+    )
+
+    if relaxed_initial_atoms is None:
+        print("Error: Initial structure relaxation failed. Cannot proceed with CI-NEB.")
+        return
+
+    print("Relaxing final structure...")
+    final_relax_dir = os.path.join(ci_neb_output_dir, "final_structure_relaxation")
+    os.makedirs(final_relax_dir, exist_ok=True)
+
+    relaxed_final_atoms = relax_structure(
+        final_atoms.copy(),
+        calculator,
+        args.engine,
+        args.fmax,
+        final_relax_dir,
+        final_cif_path,
+        relaxation_patience=getattr(args, 'relaxation_patience', 5)
+    )
+
+    if relaxed_final_atoms is None:
+        print("Error: Final structure relaxation failed. Cannot proceed with CI-NEB.")
+        return
+
+    print("Both structures successfully relaxed. Proceeding with CI-NEB optimization.")
+
+    print(f"\n--- Starting CI-NEB Optimization ---")
+    print(f"Initial structure: {len(relaxed_initial_atoms)} atoms (relaxed)")
+    print(f"Final structure: {len(relaxed_final_atoms)} atoms (relaxed)")
+    print(f"Number of intermediate images: {neb_num_images}")
+    print(f"Spring constant: {neb_spring_constant} eV/Å²")
+    print(f"Force tolerance: {neb_force_tolerance} eV/Å")
+    print(f"Maximum iterations: {neb_max_iterations}")
+    print(f"Climbing image starts at iteration: {neb_climbing_start_iteration}")
+
+    # Run CI-NEB optimization
+    try:
+        ci_neb_results = run_neb_optimization(
+            initial_atoms=relaxed_initial_atoms,
+            final_atoms=relaxed_final_atoms,
+            calculator=calculator,
+            num_images=neb_num_images,
+            spring_constant=neb_spring_constant,
+            max_iterations=neb_max_iterations,
+            force_tolerance=neb_force_tolerance,
+            output_dir=ci_neb_output_dir,
+            prefix=original_prefix,
+            climbing_start_iteration=neb_climbing_start_iteration  # CI-NEB
+        )
+    except Exception as e:
+        print(f"Error during CI-NEB optimization: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+
+    print(f"\n--- CI-NEB Optimization Results ---")
+    print(f"Converged: {ci_neb_results['converged']}")
+    print(f"Final max force: {ci_neb_results['final_max_force']:.6f} eV/Å")
+    print(f"Iterations: {ci_neb_results['iterations']}")
+    print(f"Optimization time: {ci_neb_results['optimization_time']:.2f} seconds")
+    if ci_neb_results['climbing_image_idx'] is not None:
+        print(f"Climbing image index: {ci_neb_results['climbing_image_idx']}")
+
+    # Generate enhanced CI-NEB summary with force information
+    ci_neb_params = {
+        'num_images': neb_num_images,
+        'spring_constant': neb_spring_constant,
+        'force_tolerance': neb_force_tolerance,
+        'max_iterations': neb_max_iterations,
+        'climbing_start_iteration': neb_climbing_start_iteration
+    }
+
+    # Save summary in both locations
+    ci_neb_summary_paths = [
+        os.path.join(ci_neb_output_dir, "ci_neb_summary.txt"),  # CI-NEB optimization subdirectory
+        os.path.join(base_output_dir, "ci_neb_summary.txt")     # Main output directory
+    ]
+
+    generate_enhanced_neb_summary(
+        results=ci_neb_results,
+        method_name="CI-NEB",
+        args=args,
+        final_cif_path=final_cif_path,
+        neb_params=ci_neb_params,
+        output_paths=ci_neb_summary_paths
+    )
+
+    # Export final optimized structures to final_structures directory
+    print(f"\n--- Exporting Final CI-NEB Structures ---")
+    final_structures_dir = os.path.join(base_output_dir, "final_structures")
+    os.makedirs(final_structures_dir, exist_ok=True)
+
+    optimized_images = ci_neb_results['images']
+    final_energies = ci_neb_results['final_energies']
+    climbing_idx = ci_neb_results['climbing_image_idx']
+
+    for i, (image, energy) in enumerate(zip(optimized_images, final_energies)):
+        # Create descriptive filename with energy and type
+        if i == 0:
+            structure_type = "initial"
+        elif i == len(optimized_images) - 1:
+            structure_type = "final"
+        elif i == climbing_idx:
+            structure_type = f"climbing_{i:02d}"
+        else:
+            structure_type = f"intermediate_{i:02d}"
+
+        filename = f"ci_neb_{structure_type}_img{i:02d}_energy_{energy:.4f}eV.cif"
+        output_path = os.path.join(final_structures_dir, filename)
+
+        try:
+            write(output_path, image)
+            print(f"  Saved {structure_type} structure: {filename}")
+        except Exception as e:
+            print(f"  Error saving {structure_type} structure: {e}")
+
+    print(f"Final CI-NEB structures exported to: {final_structures_dir}")
+
+    # Perform phonon analysis on selected images from the optimized path (if requested)
+    if args.with_phonon:
+        print(f"\n--- Running Phonon Analysis on CI-NEB Images ---")
+    else:
+        print(f"\n--- Skipping Phonon Analysis (--with-phonon not provided) ---")
+        print("\n--- CI-NEB Soft Mode Optimization Complete ---")
+        return
+
+    # Select images for phonon analysis (initial, final, and climbing image)
+    images_for_phonon = []
+    final_energies = ci_neb_results['final_energies']
+    optimized_images = ci_neb_results['images']
+    climbing_idx = ci_neb_results['climbing_image_idx']
+
+    # Always include initial and final
+    images_for_phonon.append((0, "initial", optimized_images[0]))
+    images_for_phonon.append((len(optimized_images)-1, "final", optimized_images[-1]))
+
+    # Include climbing image if it exists
+    if climbing_idx is not None:
+        images_for_phonon.append((climbing_idx, "climbing_transition_state", optimized_images[climbing_idx]))
+
+    # Create final structures directory
+    final_structures_dir = os.path.join(base_output_dir, "final_structures")
+    os.makedirs(final_structures_dir, exist_ok=True)
+
+    # Run phonon analysis on selected images
+    for img_idx, img_type, atoms in images_for_phonon:
+        try:
+            print(f"\n--- Phonon Analysis for {img_type} image (index {img_idx}) ---")
+
+            # Create individual phonon analysis directory
+            energy_str = f"m{abs(final_energies[img_idx]):.4f}".replace('.', 'p')
+            phonon_dir = os.path.join(base_output_dir, f"final_phonon_analysis_{img_type}_img{img_idx}_energy_{energy_str}")
+
+            # Convert to primitive structure for phonon analysis
+            pmg_structure = AseAtomsAdaptor.get_structure(atoms)
+            primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(SpacegroupAnalyzer(pmg_structure).get_primitive_standard_structure())
+
+            # Run phonon analysis
+            _, _, _, _ = run_single_phonon_analysis(
+                primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units,
+                args.supercell_dims, args.delta, args.fmax, phonon_dir,
+                prefix=f"final_{original_prefix}_{img_type}_img{img_idx}_energy_{energy_str}",
+                phonon_path_npoints=phonon_path_npoints,
+                phonon_dos_grid=phonon_dos_grid,
+                traj_kT=default_traj_kT,
+                num_modes_to_return=num_modes_to_return,
+                final_structures_dir=final_structures_dir,
+                negative_phonon_threshold=negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml
+            )
+            print(f"  Completed phonon analysis for {img_type} image")
+
+        except Exception as e:
+            print(f"  Error during phonon analysis for {img_type} image: {e}")
+            import traceback
+            traceback.print_exc()
+
+    print("\n--- CI-NEB Soft Mode Optimization Complete ---")
+
+
+def run_md_stability_analysis(args, base_output_dir, initial_atoms_for_analysis):
+    """
+    Run AIMD stability analysis using Machine Learning Interatomic Potentials.
+
+    This function follows VibroML patterns for structure preparation, MLIP-powered
+    MD simulation, and comprehensive stability analysis.
+
+    Args:
+        args: Command line arguments containing MD parameters
+        base_output_dir: Base output directory for results
+        initial_atoms_for_analysis: Initial structure for MD analysis
+    """
+    print("\n--- Running AIMD Stability Analysis ---")
+
+    # Initialize calculator
+    calculator = initialize_calculator(args.engine, args.model_name)
+    if calculator is None:
+        print("Failed to initialize calculator. Exiting MD stability analysis.")
+        return
+
+    # Get original prefix for naming
+    original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
+
+    # Create MD-specific output directory
+    md_output_dir = os.path.join(base_output_dir, "md_stability_analysis")
+    os.makedirs(md_output_dir, exist_ok=True)
+
+    print(f"MD stability analysis output directory: {md_output_dir}")
+
+    # --- Step 1: Structure Preparation ---
+    print(f"\n--- Step 1: Structure Preparation ---")
+
+    # Prepare supercell for MD simulation
+    try:
+        supercell_atoms = prepare_md_supercell(initial_atoms_for_analysis, args.supercell_size)
+        print(f"Supercell prepared with {len(supercell_atoms)} atoms")
+
+        # Save a copy of the initial supercell structure for trajectory analysis reference
+        initial_supercell_atoms = supercell_atoms.copy()
+
+        # Save initial supercell structure
+        initial_supercell_path = os.path.join(md_output_dir, f"{original_prefix}_initial_supercell.cif")
+        write(initial_supercell_path, supercell_atoms)
+        print(f"Initial supercell saved to: {initial_supercell_path}")
+
+    except Exception as e:
+        print(f"Error preparing supercell: {e}")
+        return
+
+    # --- Step 2: MD Simulation Setup ---
+    print(f"\n--- Step 2: MD Simulation Setup ---")
+
+    # Calculate simulation parameters
+    total_time_fs = args.time * 1000  # Convert ps to fs
+    equilibration_time_fs = total_time_fs * args.equilibration_fraction
+    production_time_fs = total_time_fs - equilibration_time_fs
+
+    # Split equilibration into NVT (temperature) and NPT (pressure/volume) phases
+    nvt_time_fs = equilibration_time_fs * 0.5  # 50% for temperature equilibration
+    npt_equilibration_time_fs = equilibration_time_fs * 0.5  # 50% for pressure/volume equilibration
+
+    # Use appropriate timestep (1 fs for most systems)
+    timestep_fs = 1.0
+    total_steps = int(total_time_fs / timestep_fs)
+    nvt_steps = int(nvt_time_fs / timestep_fs)
+    npt_equilibration_steps = int(npt_equilibration_time_fs / timestep_fs)
+    production_steps = int(production_time_fs / timestep_fs)
+    print(f"Total steps: {total_steps}")
+    print(f"  NVT steps: {nvt_steps}")
+    print(f"  NPT equilibration steps: {npt_equilibration_steps}")
+    print(f"  Production steps: {production_steps}")
+
+    # Temperature ramping parameters
+    ramp_fraction = 0.7  # 70% of NVT time for temperature ramping
+    ramp_steps = int(nvt_steps * ramp_fraction)
+
+    print(f"MD simulation parameters:")
+    print(f"  Total time: {args.time} ps ({total_time_fs} fs)")
+    print(f"  Phase 1 - NVT equilibration: {nvt_time_fs} fs ({nvt_steps} steps)")
+    print(f"    Temperature ramp: {ramp_steps} steps (0K → {args.temp}K)")
+    print(f"    Temperature stabilization: {nvt_steps - ramp_steps} steps")
+    print(f"  Phase 2 - NPT equilibration: {npt_equilibration_time_fs} fs ({npt_equilibration_steps} steps)")
+    print(f"  Phase 3 - NPT production: {production_time_fs} fs ({production_steps} steps)")
+    print(f"  Timestep: {timestep_fs} fs")
+    print(f"  Total steps: {total_steps}")
+
+    # Set up NVT ensemble for temperature equilibration
+    try:
+        nvt_dynamics = setup_nvt_ensemble(
+            supercell_atoms,
+            args.temp,
+            calculator,
+            timestep_fs
+        )
+        print("NVT ensemble setup completed")
+
+    except Exception as e:
+        print(f"Error setting up NVT ensemble: {e}")
+        return
+
+    # --- Step 3: MD Simulation Execution ---
+    print(f"\n--- Step 3: MD Simulation Execution ---")
+
+    # Set up trajectory file
+    trajectory_file = os.path.join(md_output_dir, f"{original_prefix}_md_trajectory.traj")
+
+    # Set up logging
+    log_file = os.path.join(md_output_dir, f"{original_prefix}_md_log.txt")
+
+    print(f"Starting two-stage MD equilibration protocol...")
+    print(f"Trajectory will be saved to: {trajectory_file}")
+    print(f"MD log will be saved to: {log_file}")
+
+    start_time = time.time()
+
+    try:
+        # Import required ASE modules for MD
+        from ase.io.trajectory import Trajectory
+        from vibroml.utils.md_utils import StressMDLogger
+
+        # Set up trajectory writer
+        traj_writer = Trajectory(trajectory_file, 'w', supercell_atoms)
+
+        # --- Phase 1: NVT Temperature Equilibration ---
+        print(f"\n--- Phase 1: NVT Temperature Equilibration ---")
+        print(f"Ramping temperature from 0K to {args.temp}K over {ramp_steps} steps")
+
+        # Set up NVT logger
+        nvt_log_file = os.path.join(md_output_dir, f"{original_prefix}_nvt_log.txt")
+        nvt_logger = StressMDLogger(nvt_dynamics, supercell_atoms, nvt_log_file, header=True,
+                                   stress=False, peratom=True, mode="w")
+
+        # Attach trajectory writer and logger for NVT phase
+        nvt_dynamics.attach(traj_writer.write, interval=max(1, nvt_steps // 500))  # Save frames
+        nvt_dynamics.attach(nvt_logger, interval=max(1, nvt_steps // 50))  # Log frequently during equilibration
+
+        # Temperature ramping callback
+        def ramp_callback():
+            step = nvt_dynamics.nsteps
+            temperature_ramp_callback(nvt_dynamics, args.temp, step, ramp_steps)
+
+        # Attach temperature ramping
+        nvt_dynamics.attach(ramp_callback, interval=1)
+
+        # Run NVT equilibration
+        nvt_dynamics.run(nvt_steps)
+
+        print(f"NVT equilibration completed. Final temperature: {nvt_dynamics.atoms.get_temperature():.1f} K")
+
+        # --- Phase 2: NPT Pressure/Volume Equilibration ---
+        print(f"\n--- Phase 2: NPT Pressure/Volume Equilibration ---")
+
+        # Set up NPT ensemble using the equilibrated structure from NVT
+        npt_dynamics = setup_npt_ensemble(
+            supercell_atoms,  # Already has proper velocities from NVT
+            args.temp,
+            args.pressure,
+            calculator,
+            timestep_fs
+        )
+
+        # Set up NPT logger
+        npt_log_file = os.path.join(md_output_dir, f"{original_prefix}_npt_log.txt")
+        npt_logger = StressMDLogger(npt_dynamics, supercell_atoms, npt_log_file, header=True,
+                                   stress=True, peratom=True, mode="w")
+
+        # Attach trajectory writer and logger for NPT equilibration
+        npt_dynamics.attach(traj_writer.write, interval=max(1, npt_equilibration_steps // 200))
+        npt_dynamics.attach(npt_logger, interval=max(1, npt_equilibration_steps // 20))
+
+        # Run NPT equilibration
+        npt_dynamics.run(npt_equilibration_steps)
+
+        print(f"NPT equilibration completed.")
+        print(f"  Temperature: {npt_dynamics.atoms.get_temperature():.1f} K")
+        print(f"  Volume: {npt_dynamics.atoms.get_volume():.2f} Å³")
+        
+        # --- Phase 3: NPT Production Run ---
+        print(f"\n--- Phase 3: NPT Production Run ---")
+
+        # Create separate NPT dynamics object for production to avoid log file reuse
+        npt_production_dynamics = setup_npt_ensemble(
+            supercell_atoms,
+            args.temp,
+            args.pressure,
+            calculator,
+            timestep_fs
+        )
+
+        # Set up separate production trajectory file for cleaner analysis
+        production_trajectory_file = os.path.join(md_output_dir, f"{original_prefix}_production_trajectory.traj")
+        production_traj_writer = Trajectory(production_trajectory_file, 'w', supercell_atoms)
+
+        # Set up production logger (less frequent logging)
+        prod_log_file = os.path.join(md_output_dir, f"{original_prefix}_production_log.txt")
+        prod_logger = StressMDLogger(npt_production_dynamics, supercell_atoms, prod_log_file, header=True,
+                                    stress=True, peratom=True, mode="w")
+
+        # Attach trajectory writer and logger for production
+        npt_production_dynamics.attach(production_traj_writer.write, interval=max(1, production_steps // 1000))  # Save ~1000 frames
+        npt_production_dynamics.attach(prod_logger, interval=max(1, production_steps // 100))  # Log every ~1% of production
+
+        # Run production phase
+        npt_production_dynamics.run(production_steps)
+
+        # Close trajectory files
+        traj_writer.close()
+        production_traj_writer.close()
+
+        simulation_time = time.time() - start_time
+        print(f"Complete MD simulation finished in {simulation_time:.2f} seconds")
+        print(f"  NVT phase: {nvt_steps} steps")
+        print(f"  NPT equilibration: {npt_equilibration_steps} steps")
+        print(f"  NPT production: {production_steps} steps")
+
+    except Exception as e:
+        print(f"Error during MD simulation: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+
+    # --- Step 4: Trajectory Analysis ---
+    print(f"\n--- Step 4: Trajectory Analysis ---")
+
+    try:
+        # Calculate production sampling interval for analysis
+        prod_interval = max(1, production_steps // 1000) if production_steps > 0 else 1
+
+        # Analyze trajectory stability using production-only trajectory file
+        # This simplifies analysis since no equilibration frame skipping is needed
+        stability_results = analyze_trajectory_stability(
+            production_trajectory_file,  # Use production-only trajectory
+            initial_supercell_atoms,     # Use initial supercell for comparison (same size as trajectory)
+            timestep_fs,
+            prod_interval,
+            production_steps
+        )
+
+        # Analyze energy trajectory using production-only trajectory file
+        energy_results = analyze_energy_trajectory(production_trajectory_file)
+
+        print("Trajectory analysis completed")
+        print(f"  Analysis performed on production phase ({production_steps} steps, {production_steps * timestep_fs:.1f} fs)")
+        print(f"  Using separate production trajectory file for cleaner analysis")
+
+    except Exception as e:
+        print(f"Error during trajectory analysis: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+
+    # --- Step 5: Stability Assessment ---
+    print(f"\n--- Step 5: Stability Assessment ---")
+
+    try:
+        # Determine stability verdict using configurable thresholds
+        stability_verdict = determine_stability(
+            stability_results,
+            rmsd_threshold=args.rmsd_threshold,
+            volume_threshold=args.volume_threshold,
+            rdf_threshold=args.rdf_threshold
+        )
+
+        print(f"Stability analysis completed")
+        print(f"Verdict: {stability_verdict['verdict']} (confidence: {stability_verdict['confidence']})")
+
+    except Exception as e:
+        print(f"Error during stability assessment: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+
+    # --- Step 6: Generate Output Files ---
+    print(f"\n--- Step 6: Generating Output Files ---")
+
+    try:
+        # Generate analysis plots
+        plot_files = save_trajectory_analysis_plots(
+            stability_results,
+            energy_results,
+            md_output_dir,
+            original_prefix
+        )
+
+        # Save final structure from production trajectory
+        final_production_trajectory = read(production_trajectory_file, index=':')
+        final_structure = final_production_trajectory[-1]
+        final_structure_path = os.path.join(md_output_dir, f"{original_prefix}_final_structure.cif")
+        write(final_structure_path, final_structure)
+        print(f"Final structure saved to: {final_structure_path}")
+
+        # Create XYZ trajectory for visualization
+        xyz_trajectory_path = os.path.join(md_output_dir, f"{original_prefix}_production_trajectory.xyz")
+        write(xyz_trajectory_path, final_production_trajectory)
+        print(f"XYZ trajectory saved to: {xyz_trajectory_path}")
+
+        # Save trajectory in XYZ format for visualization
+        xyz_trajectory_path = os.path.join(md_output_dir, f"{original_prefix}_trajectory.xyz")
+        # Save every 10th frame to reduce file size
+        xyz_frames = final_trajectory[::max(1, len(final_trajectory)//100)]
+        write(xyz_trajectory_path, xyz_frames)
+        print(f"Trajectory (XYZ format) saved to: {xyz_trajectory_path}")
+
+    except Exception as e:
+        print(f"Error generating output files: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # --- Step 7: Generate Comprehensive Report ---
+    print(f"\n--- Step 7: Generating Comprehensive Report ---")
+
+    try:
+        # Generate comprehensive MD stability report
+        report_path = os.path.join(md_output_dir, f"{original_prefix}_md_stability_report.txt")
+
+        with open(report_path, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("AIMD STABILITY ANALYSIS REPORT\n")
+            f.write("=" * 80 + "\n")
+            f.write(f"Analysis Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Structure: {args.cif}\n")
+            f.write(f"Engine: {args.engine}\n")
+            if hasattr(args, 'model_name'):
+                f.write(f"Model: {args.model_name}\n")
+            f.write("\n")
+
+            # Executive Summary
+            f.write("EXECUTIVE SUMMARY\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"Stability Verdict: {stability_verdict['verdict']}\n")
+            f.write(f"Confidence Level: {stability_verdict['confidence']}\n")
+            f.write("\n")
+
+            # Simulation Parameters
+            f.write("SIMULATION PARAMETERS\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"Temperature: {args.temp} K\n")
+            f.write(f"Pressure: {args.pressure} GPa\n")
+            f.write(f"Total simulation time: {args.time} ps\n")
+            f.write(f"Supercell size: {args.supercell_size}\n")
+            f.write(f"Equilibration fraction: {args.equilibration_fraction}\n")
+            f.write(f"Number of atoms: {len(supercell_atoms)}\n")
+            f.write(f"Timestep: {timestep_fs} fs\n")
+            f.write(f"Total steps: {total_steps}\n")
+            f.write(f"Production steps: {production_steps}\n")
+            f.write(f"\n")
+            f.write(f"Stability Assessment Thresholds (MLIP-optimized):\n")
+            f.write(f"  RMSD threshold: {args.rmsd_threshold} Å\n")
+            f.write(f"  Volume fluctuation threshold: ±{args.volume_threshold}%\n")
+            f.write(f"  RDF correlation threshold: >{args.rdf_threshold}\n")
+            f.write("\n")
+
+            # Stability Metrics
+            f.write("STABILITY METRICS\n")
+            f.write("-" * 40 + "\n")
+            for reason in stability_verdict['reasoning']:
+                f.write(f"{reason}\n")
+            f.write("\n")
+
+            # Detailed Analysis
+            f.write("DETAILED ANALYSIS\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"RMSD Analysis:\n")
+            f.write(f"  Mean RMSD: {stability_results['rmsd_mean']:.3f} Å\n")
+            f.write(f"  RMSD std dev: {stability_results['rmsd_std']:.3f} Å\n")
+            f.write(f"  RMSD trend: {stability_results['rmsd_trend']:.2e} Å/step\n")
+            f.write(f"\n")
+
+            f.write(f"Volume Analysis (MLIP-optimized approach):\n")
+            f.write(f"  Reference volume (first {stability_results['volume_reference_time_fs']:.1f} fs): {stability_results['average_volume']:.2f} Å³\n")
+            f.write(f"  Reference frames used: {stability_results['volume_reference_frames']}\n")
+            f.write(f"  Mean volume fluctuation: {stability_results['volume_mean_change']:.2f}%\n")
+            f.write(f"  Volume fluctuation std dev: {stability_results['volume_std_change']:.2f}%\n")
+            f.write(f"  Max volume fluctuation: {stability_results['volume_max_change']:.2f}%\n")
+            f.write(f"  Note: Fluctuations calculated relative to production phase average\n")
+            f.write(f"\n")
+
+            f.write(f"RDF Analysis:\n")
+            f.write(f"  Initial vs final correlation: {stability_results['rdf_correlation']:.3f}\n")
+            f.write(f"\n")
+
+            if energy_results.get('has_energy_data', False):
+                f.write(f"Energy Analysis:\n")
+                f.write(f"  Mean energy: {energy_results['energy_mean']:.6f} eV/atom\n")
+                f.write(f"  Energy std dev: {energy_results['energy_std']:.6f} eV/atom\n")
+                f.write(f"  Energy drift: {energy_results['energy_drift']:.2e} eV/atom/fs\n")
+                f.write(f"\n")
+
+            # Generated Files
+            f.write("GENERATED FILES\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"Combined trajectory file: {os.path.basename(trajectory_file)}\n")
+            f.write(f"Production trajectory file: {os.path.basename(production_trajectory_file)}\n")
+            f.write(f"Final structure: {os.path.basename(final_structure_path)}\n")
+            f.write(f"XYZ trajectory: {os.path.basename(xyz_trajectory_path)}\n")
+            f.write(f"MD log: {os.path.basename(log_file)}\n")
+            for plot_file in plot_files:
+                f.write(f"Analysis plot: {os.path.basename(plot_file)}\n")
+            f.write("\n")
+
+            # Recommendations
+            f.write("RECOMMENDATIONS\n")
+            f.write("-" * 40 + "\n")
+            if stability_verdict['verdict'] == 'STABLE':
+                f.write("The structure appears to be dynamically stable under the given conditions.\n")
+                f.write("Consider running longer simulations or different temperatures for validation.\n")
+            else:
+                f.write("The structure shows signs of instability under the given conditions.\n")
+                f.write("Consider:\n")
+                f.write("- Running at lower temperatures\n")
+                f.write("- Checking for phase transitions\n")
+                f.write("- Performing phonon analysis for comparison\n")
+            f.write("\n")
+
+            f.write("=" * 80 + "\n")
+
+        print(f"Comprehensive report saved to: {report_path}")
+
+        # Generate machine-readable summary
+        summary_path = os.path.join(md_output_dir, f"{original_prefix}_md_stability_summary.csv")
+
+        with open(summary_path, 'w') as f:
+            f.write("structure,verdict,confidence,rmsd_mean,volume_max_change,rdf_correlation,")
+            f.write("temperature,pressure,time_ps,supercell_size,num_atoms,")
+            f.write("rmsd_threshold,volume_threshold,rdf_threshold,volume_ref_frames,volume_ref_time_fs\n")
+            f.write(f"{original_prefix},{stability_verdict['verdict']},{stability_verdict['confidence']},")
+            f.write(f"{stability_results['rmsd_mean']:.6f},{stability_results['volume_max_change']:.2f},")
+            f.write(f"{stability_results['rdf_correlation']:.6f},{args.temp},{args.pressure},")
+            f.write(f"{args.time},{args.supercell_size},{len(supercell_atoms)},")
+            f.write(f"{args.rmsd_threshold},{args.volume_threshold},{args.rdf_threshold},")
+            f.write(f"{stability_results['volume_reference_frames']},{stability_results['volume_reference_time_fs']:.1f}\n")
+
+        print(f"Machine-readable summary saved to: {summary_path}")
+
+        # Save configuration if requested
+        if args.save_yaml:
+            import yaml
+            config_path = os.path.join(md_output_dir, f"{original_prefix}_md_stability_config.yaml")
+
+            config_data = {
+                'md_parameters': {
+                    'temperature': args.temp,
+                    'pressure': args.pressure,
+                    'time': args.time,
+                    'supercell_size': args.supercell_size,
+                    'equilibration_fraction': args.equilibration_fraction
+                },
+                'simulation_details': {
+                    'engine': args.engine,
+                    'model_name': getattr(args, 'model_name', 'default'),
+                    'timestep_fs': timestep_fs,
+                    'total_steps': total_steps,
+                    'production_steps': production_steps,
+                    'num_atoms': len(supercell_atoms)
+                },
+                'stability_results': {
+                    'verdict': stability_verdict['verdict'],
+                    'confidence': stability_verdict['confidence'],
+                    'rmsd_mean': float(stability_results['rmsd_mean']),
+                    'volume_max_change': float(stability_results['volume_max_change']),
+                    'rdf_correlation': float(stability_results['rdf_correlation'])
+                }
+            }
+
+            with open(config_path, 'w') as f:
+                yaml.dump(config_data, f, default_flow_style=False, indent=2)
+
+            print(f"Configuration saved to: {config_path}")
+
+    except Exception as e:
+        print(f"Error generating report: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print(f"\n--- AIMD Stability Analysis Complete ---")
+    print(f"Final verdict: {stability_verdict['verdict']} (confidence: {stability_verdict['confidence']})")
+    print(f"All results saved to: {md_output_dir}")
+
+    return stability_verdict

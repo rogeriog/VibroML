@@ -18,7 +18,7 @@ from .plotting_utils import plot_phonon_results
 from .utils import save_raw_data
 from .genetic_algorithm import GeneticAlgorithm
 from .structure_utils import estimate_commensurate_supercell_size
-def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None):
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False):
    """
    Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
 
@@ -152,7 +152,11 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
    bs, path, dos, bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, discontinuities, y_label, bsmin = get_phonon_results(ph, atoms, units, phonon_path_npoints, phonon_dos_grid)
 
    print("\n--- Step 3: Saving YAML and Raw Data ---")
-   save_phonopy_band_yaml(ph, path, bs, all_k_point_distances, output_dir, prefix)
+   if save_yaml:
+       save_phonopy_band_yaml(ph, path, bs, all_k_point_distances, output_dir, prefix)
+       print("   YAML file saved.")
+   else:
+       print("   YAML file saving skipped (--save-yaml not provided).")
    save_raw_data(bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, supercell_dims, delta, fmax, output_dir)
 
    print("\n--- Step 4: Plotting Results ---")
