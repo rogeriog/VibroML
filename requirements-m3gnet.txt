@@ -1,0 +1,30 @@
+# M3GNet-specific dependencies
+# Install with: pip install -r requirements-m3gnet.txt
+# These are required for running VibroML with the M3GNet calculator
+
+# M3GNet calculator
+m3gnet==0.2.4
+
+# TensorFlow and related packages
+tensorflow==2.19.0
+tensorflow-io-gcs-filesystem==0.37.1
+tensorboard==2.19.0
+tensorboard-data-server==0.7.2
+
+# TensorFlow dependencies
+absl-py==2.3.0
+astunparse==1.6.3
+flatbuffers==25.2.10
+gast==0.6.0
+google-pasta==0.2.0
+grpcio==1.73.0
+h5py==3.14.0
+keras==3.10.0
+libclang==18.1.1
+lightning-utilities==0.14.3
+ml-dtypes==0.5.1
+namex==0.1.0
+protobuf==5.29.5
+termcolor==3.1.0
+werkzeug==3.1.3
+

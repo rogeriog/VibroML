@@ -11,7 +11,7 @@ from .utils.md_utils import (prepare_md_supercell, setup_nvt_ensemble, setup_npt
                             temperature_ramp_callback, monitor_equilibration_convergence,
                             analyze_trajectory_stability, analyze_energy_trajectory,
                             determine_stability, save_trajectory_analysis_plots)
-
+from .checkpointing import CheckpointManager, should_skip_sample
 
 from .utils.genetic_algorithm import GeneticAlgorithm
 
@@ -134,11 +134,12 @@ def run_phonon_calculation_sweep_optimization(args, output_dir, initial_atoms, c
         run_settings['fmax'] = fm
         with open(os.path.join(current_output_dir, "run_settings.json"), 'w') as f:
             json.dump(run_settings, f, indent=4)
-        print(f"\nAttempting to relax structure for Fmax={fm}...")  
-        # Pass a copy of initial_atoms to relax_structure to avoid modifying it directly  
+        print(f"\nAttempting to relax structure for Fmax={fm}...")
+        # Pass a copy of initial_atoms to relax_structure to avoid modifying it directly
         relaxed_atoms_for_current_params = relax_structure(
             initial_atoms.copy(), calculator, args.engine, fm, current_output_dir, args.cif,
-            relaxation_patience=getattr(args, 'relaxation_patience', 5)
+            relaxation_patience=getattr(args, 'relaxation_patience', 5),
+            volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
         )
         if relaxed_atoms_for_current_params is None:
             print(f"Skipping phonon analysis for N={sc_dims_str}, D={d}, F={fm} due to failed relaxation.")
@@ -373,15 +374,91 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
     """
     print("\n--- Running Soft Mode Iterative Optimization (Genetic Algorithm) ---")
 
-    # --- 1. Initial Setup ---
     current_primitive_atoms = initial_atoms_for_soft_mode_analysis.copy()
     current_softest_modes_info_list = initial_softest_modes_info_list
-    calculator = initialize_calculator(args.engine)
-    if calculator is None:
-        print("Failed to initialize calculator. Exiting.")
-        return
+    
+    calculator = initialize_calculator(args.engine, model_name=args.model_name, checkpoint_path=args.checkpoint, nep_model_path=args.nep_model, checkpoint_model_path=args.checkpoint_model)
+    if calculator is None: return
 
     original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
+    checkpoint_manager = CheckpointManager(base_output_dir, 'ga')
+    
+    checkpoint_data = checkpoint_manager.load_latest_checkpoint()
+    checkpoint_state = None
+    resume_from_checkpoint = False
+    
+    if checkpoint_data:
+        checkpoint_full, checkpoint_state = checkpoint_data
+        resume_from_checkpoint = True
+        print("\n" + "="*80)
+        print("RESUMING FROM CHECKPOINT")
+        print("="*80)
+        
+        # Restore data
+        if checkpoint_full.get('current_softest_modes'):
+             current_softest_modes_info_list = checkpoint_full['current_softest_modes']
+        
+        # --- EXPLICIT CONVERSION TO NUMPY ---
+        # Force conversion here in case CheckpointManager failed or used Lists
+        if current_softest_modes_info_list:
+            for mode in current_softest_modes_info_list:
+                if 'raw_displacements' in mode:
+                    mode['raw_displacements'] = np.array(mode['raw_displacements'], dtype=complex)
+        
+        if checkpoint_full.get('current_primitive_atoms'):
+             current_primitive_atoms = checkpoint_full['current_primitive_atoms']
+
+    # --- CHECK IF DATA IS VALID ---
+    needs_recalc = False
+    if not current_softest_modes_info_list:
+        needs_recalc = True
+        print("DEBUG: Recalc needed - List is empty")
+    elif len(current_softest_modes_info_list) > 0:
+        first_mode = current_softest_modes_info_list[0]
+        if first_mode.get('label') == 'RESUME_PLACEHOLDER':
+            needs_recalc = True
+            print("DEBUG: Recalc needed - Placeholder detected")
+        elif 'raw_displacements' not in first_mode:
+            needs_recalc = True
+            print("DEBUG: Recalc needed - missing raw_displacements key")
+        else:
+            disp = first_mode['raw_displacements']
+            # Strict dimension checks
+            if isinstance(disp, list) and len(disp) == 0:
+                 needs_recalc = True
+                 print("DEBUG: Recalc needed - Displacement is empty list")
+            elif isinstance(disp, np.ndarray):
+                 if disp.size == 0:
+                     needs_recalc = True
+                     print("DEBUG: Recalc needed - Displacement array is size 0")
+                 elif disp.ndim < 2:
+                     # This caused the AxisError. If it's 1D, we must recalc.
+                     needs_recalc = True
+                     print(f"DEBUG: Recalc needed - Invalid dimensions: {disp.shape} (Must be at least 2D)")
+
+    if needs_recalc:
+        print("⚠ RESUME NOTICE: Soft mode data is missing, invalid, or placeholder.")
+        print("  Running immediate phonon analysis to recover eigenvectors before starting GA...")
+        
+        recovery_dir = os.path.join(base_output_dir, "resume_recovery_phonon_check")
+        os.makedirs(recovery_dir, exist_ok=True)
+        
+        recovered_modes, _, _, recovered_tracking = run_single_phonon_analysis(
+            current_primitive_atoms.copy(), calculator, args.engine, args.units,
+            args.supercell_dims, args.delta, args.fmax, recovery_dir, 
+            prefix="resume_recovery",
+            phonon_path_npoints=phonon_path_npoints, phonon_dos_grid=phonon_dos_grid,
+            traj_kT=default_traj_kT, num_modes_to_return=num_modes_to_return,
+            negative_phonon_threshold=negative_phonon_threshold_thz,
+            save_yaml=args.save_yaml
+        )
+        
+        if recovered_modes:
+            current_softest_modes_info_list = recovered_modes
+            print(f"  ✓ Recovered {len(recovered_modes)} soft modes.")
+        else:
+            print("  ⚠ Warning: No soft modes found during recovery check.")
+
     threshold_in_current_units = negative_phonon_threshold_thz
     if args.units == "cm-1":
         threshold_in_current_units *= 33.35641
@@ -416,7 +493,17 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
     supercell_variants = [commensurate_supercell] + [sc for sc in required_supercells if sc != commensurate_supercell]
                 
     # Stores results for all iterations, including GA parameters, fitness (energy), and relaxed atoms object.
-    all_iterations_results = []
+    if resume_from_checkpoint:
+        all_iterations_results = checkpoint_full.get('results', [])
+        # Restore current primitive atoms if available
+        if checkpoint_full.get('current_primitive_atoms'):
+            current_primitive_atoms = checkpoint_full['current_primitive_atoms']
+        # Restore current soft modes if available
+        if checkpoint_full.get('current_softest_modes'):
+            current_softest_modes_info_list = checkpoint_full['current_softest_modes']
+        print(f"Restored {len(all_iterations_results)} previous results from checkpoint")
+    else:
+        all_iterations_results = []
 
     # Define GA parameter bounds. These ranges should be configurable, perhaps from default_settings.json.
     disp_scale_bounds = (0.0, 10.0) # Example: 0 to 10 Angstrom displacement magnitude
@@ -444,11 +531,23 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
     )
 
     # --- 2. Main Iterative Loop (Genetic Algorithm Driven) ---
-    for main_iteration_idx in range(1, max_iterations + 1):  
+    # Determine starting iteration based on checkpoint
+    start_iteration = 1
+    if resume_from_checkpoint:
+        start_iteration = checkpoint_state.get('main_iteration', 1)
+        print(f"Resuming from main iteration {start_iteration}")
+    
+    for main_iteration_idx in range(start_iteration, max_iterations + 1):
         print(f"\n### Starting Main Iteration {main_iteration_idx} ({ga_generations} GA generations + phonon check) ###")
 
         # Run GA generations for this main iteration
-        for ga_generation in range(1, ga_generations + 1):
+        # Determine starting generation based on checkpoint
+        start_generation = 1
+        if resume_from_checkpoint and main_iteration_idx == checkpoint_state.get('main_iteration', 1):
+            start_generation = checkpoint_state.get('ga_generation', 1)
+            print(f"Resuming from GA generation {start_generation}")
+        
+        for ga_generation in range(start_generation, ga_generations + 1):
             print(f"\n--- GA Generation {ga_generation} of Main Iteration {main_iteration_idx} ---")
 
             # Initialize mutation summary to ensure it's always available
@@ -458,6 +557,20 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 'replacement_rate': 0.0,
                 'selected_modes': []
             }
+            
+            # CRITICAL IMPROVEMENT 1: Restore offspring parameters from checkpoint if resuming mid-generation
+            new_offspring_params = None
+            new_mutation_data = None
+            
+            if resume_from_checkpoint and checkpoint_full.get('current_offspring_params'):
+                if main_iteration_idx == checkpoint_state.get('main_iteration', 1) and ga_generation == checkpoint_state.get('ga_generation', 1):
+                    print("✓ Restoring offspring parameters from checkpoint to ensure GA consistency...")
+                    new_offspring_params = checkpoint_full['current_offspring_params']
+                    # Generate dummy mutation data for restored offspring (logging purposes)
+                    new_mutation_data = [{'mode_replaced': False, 'selected_mode': None}] * len(new_offspring_params)
+                    print(f"  Restored {len(new_offspring_params)} offspring parameters from checkpoint")
+                    # Clear the checkpoint data so next generation doesn't use it
+                    checkpoint_full['current_offspring_params'] = None
         
             # Prepare initial population for the first iteration, or evolve for subsequent
             if ga_generation == 1:
@@ -476,7 +589,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 # Adds additional random samples to reach population_size
                 # The GA object now handles this internally when filling up the population
                 ga.initialize_population(initial_individuals=initial_ga_individuals)
-                new_offspring_params, new_mutation_data = ga.get_population_with_mutation_data()
+                if new_offspring_params is None:  # Only if not restored from checkpoint
+                    new_offspring_params, new_mutation_data = ga.get_population_with_mutation_data()
 
                 # Get mutation summary for initialization (includes mode replacements during random generation)
                 mutation_summary = ga.get_mutation_summary()
@@ -491,22 +605,31 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                     if mutation_summary['total_individuals'] > 0:
                         mutation_summary['replacement_rate'] = mutation_summary['mode_replacements'] / mutation_summary['total_individuals']
             else:  
-                # Subsequent generations: normal GA evolution
-                current_generation_results = [r for r in all_iterations_results if r.get('main_iteration') == main_iteration_idx and r.get('ga_generation') == ga_generation - 1]  
-                if not current_generation_results:  
-                    print(f"No results from previous generation to evolve from. Using all available results.")  
-                    current_generation_results = all_iterations_results[-ga_population_size:] if len(all_iterations_results) >= ga_population_size else all_iterations_results  
-                
-                ga_format_current = convert_results_for_ga(current_generation_results)
-                if ga_format_current:
-                    new_offspring_params, new_mutation_data = ga.evolve(ga_format_current)
-                    # Get mutation summary for this generation
-                    mutation_summary = ga.get_mutation_summary()
+                # Subsequent generations: normal GA evolution (unless restored from checkpoint)
+                if new_offspring_params is None:  # Only if not restored from checkpoint
+                    current_generation_results = [r for r in all_iterations_results if r.get('main_iteration') == main_iteration_idx and r.get('ga_generation') == ga_generation - 1]  
+                    if not current_generation_results:  
+                        print(f"No results from previous generation to evolve from. Using all available results.")  
+                        current_generation_results = all_iterations_results[-ga_population_size:] if len(all_iterations_results) >= ga_population_size else all_iterations_results  
+                    
+                    ga_format_current = convert_results_for_ga(current_generation_results)
+                    if ga_format_current:
+                        new_offspring_params, new_mutation_data = ga.evolve(ga_format_current)
+                        # Get mutation summary for this generation
+                        mutation_summary = ga.get_mutation_summary()
+                    else:
+                        print("No valid results to evolve from. Generating random population.")
+                        ga.initialize_population()
+                        new_offspring_params, new_mutation_data = ga.get_population_with_mutation_data()
+                        # No mutation summary for random initialization
+                        mutation_summary = {
+                            'total_individuals': len(new_offspring_params),
+                            'mode_replacements': 0,
+                            'replacement_rate': 0.0,
+                            'selected_modes': []
+                        }
                 else:
-                    print("No valid results to evolve from. Generating random population.")
-                    ga.initialize_population()
-                    new_offspring_params, new_mutation_data = ga.get_population_with_mutation_data()
-                    # No mutation summary for random initialization
+                    # Offspring were restored from checkpoint, use them as-is
                     mutation_summary = {
                         'total_individuals': len(new_offspring_params),
                         'mode_replacements': 0,
@@ -523,12 +646,25 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
 
             # Generate, Relax, and Evaluate each new individual
             for i, (individual_params, individual_mutation_data) in enumerate(zip(new_offspring_params, new_mutation_data)):
+                sample_index = i + 1
+                
+                # Check if we should skip this sample (already completed in checkpoint)
+                if resume_from_checkpoint:
+                    current_state_check = {
+                        'main_iteration': main_iteration_idx,
+                        'ga_generation': ga_generation,
+                        'sample_index': sample_index
+                    }
+                    if should_skip_sample(checkpoint_state, current_state_check, 'ga'):
+                        print(f"\n  ⏭ Skipping sample {sample_index} (already completed in checkpoint)")
+                        continue
+                
                 scale_mode1, ratio_mode2_to_mode1, cell_transformation_vector, supercell_variant, use_phase_factor = individual_params
 
-                sample_output_dir = os.path.join(base_output_dir, f"main_iter_{main_iteration_idx}_gen_{ga_generation}", f"sample_{i+1}")
+                sample_output_dir = os.path.join(base_output_dir, f"main_iter_{main_iteration_idx}_gen_{ga_generation}", f"sample_{sample_index}")
                 os.makedirs(sample_output_dir, exist_ok=True)
 
-                print(f"\n  Generating and relaxing structure for GA sample {i+1} (Main Iter {main_iteration_idx}, Gen {ga_generation}):")
+                print(f"\n  Generating and relaxing structure for GA sample {sample_index} (Main Iter {main_iteration_idx}, Gen {ga_generation}):")
 
                 # Retry mechanism for unphysical parameters
                 max_retries = 10  # Maximum number of retry attempts
@@ -558,7 +694,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                         original_prefix,
                         cell_transformation_vector,
                         use_phase_factor,
-                        individual_mutation_data  # Pass mutation data for filename and logging
+                        individual_mutation_data,  # Pass mutation data for filename and logging
+                        max_atoms_per_supercell=getattr(args, 'max_atoms_per_supercell', None)
                     )
 
                     retry_count += 1
@@ -586,7 +723,11 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
 
                 sample_relaxation_results = []
                 for folder in unique_supercell_folders:
-                    folder_relaxation_results = relax_structures_in_folder(folder, calculator, args.engine, args.fmax, relaxation_patience=getattr(args, 'relaxation_patience', 5))
+                    folder_relaxation_results = relax_structures_in_folder(
+                        folder, calculator, args.engine, args.fmax,
+                        relaxation_patience=getattr(args, 'relaxation_patience', 5),
+                        volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
+                    )
                     sample_relaxation_results.extend(folder_relaxation_results)
 
                 if not sample_relaxation_results:
@@ -625,9 +766,26 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                             'crystal_system': best_result_for_sample.get('crystal_system', 'N/A'),
                             'main_iteration': main_iteration_idx,  
                             'ga_generation': ga_generation,  
-                            'sample': i + 1
+                            'sample': sample_index
                         })
-                        print(f"    Sample {i+1} relaxed. Lowest energy: {best_result_for_sample['energy_per_atom']:.6f} eV/atom")
+                        print(f"    Sample {sample_index} relaxed. Lowest energy: {best_result_for_sample['energy_per_atom']:.6f} eV/atom")
+                        
+                        # Save checkpoint after each successful sample
+                        try:
+                            checkpoint_manager.save_checkpoint_ga(
+                                main_iteration=main_iteration_idx,
+                                ga_generation=ga_generation,
+                                sample_index=sample_index,
+                                all_iterations_results=all_iterations_results + iteration_results,
+                                ga_state={'population': ga.population, 'generation': ga_generation},
+                                current_primitive_atoms=current_primitive_atoms,
+                                current_softest_modes=current_softest_modes_info_list,
+                                tracked_k_points_data=ga.tracked_k_points_data if hasattr(ga, 'tracked_k_points_data') else None,
+                                current_offspring_params=new_offspring_params
+                            )
+                            checkpoint_manager.cleanup_old_checkpoints(keep_last_n=5)
+                        except Exception as e:
+                            print(f"    ⚠ Warning: Failed to save checkpoint: {e}")
                 else:
                     print(f"    Could not find lowest energy for sample {i+1}.")
                     iteration_results.append({
@@ -637,7 +795,7 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                         'original_file': None,
                         'main_iteration': main_iteration_idx,  
                         'ga_generation': ga_generation,  
-                        'sample': i + 1
+                        'sample': sample_index
                     })
 
             # Add this iteration's results to the master list for GA evolution in next iteration
@@ -805,7 +963,15 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             # Update supercell variants based on the new guiding mode's q-point
             if 'coordinate' in next_softest_modes_info_list[0]:
                 q_point_for_supercell = next_softest_modes_info_list[0]['coordinate']
-                supercell_variants = [estimate_commensurate_supercell_size(q_point_for_supercell)]
+                
+                # FIX: Add a standard 2x2x2 (or similar) as a backup option
+                commensurate = estimate_commensurate_supercell_size(q_point_for_supercell)
+                backup_sc = (2, 2, 2) # Or use args.supercell_dims
+                
+                # Create list with both. The filter will now reject 'commensurate' if it's huge 
+                # and pick 'backup_sc' instead because it fits the atom limit.
+                supercell_variants = [commensurate, backup_sc]
+                
                 print(f"Updated commensurate supercell size to {supercell_variants[0]} based on new softest mode q-point {q_point_for_supercell}.")
             else:
                 supercell_variants = [(2,2,2)] # Default if no q-point info
@@ -1146,11 +1312,31 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
 
     # --- 1. Initial Setup ---
     current_primitive_atoms = initial_atoms_for_soft_mode_analysis.copy()
-    calculator = initialize_calculator(args.engine)
+    calculator = initialize_calculator(args.engine, model_name=args.model_name, checkpoint_path=args.checkpoint, nep_model_path=args.nep_model, checkpoint_model_path=args.checkpoint_model)
     if calculator is None:
         print("Failed to initialize calculator. Exiting.")
         return
     original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
+    
+    # Initialize checkpoint manager
+    checkpoint_manager = CheckpointManager(base_output_dir, 'traditional')
+    
+    # Try to load existing checkpoint
+    checkpoint_data = checkpoint_manager.load_latest_checkpoint()
+    checkpoint_state = None
+    resume_from_checkpoint = False
+    
+    if checkpoint_data:
+        checkpoint_full, checkpoint_state = checkpoint_data
+        resume_from_checkpoint = True
+        print("\n" + "="*80)
+        print("RESUMING FROM CHECKPOINT")
+        print("="*80)
+        print(f"Iteration: {checkpoint_state.get('iteration', 1)}")
+        print(f"Sample Index: {checkpoint_state.get('sample_index', 0)}")
+        print(f"Completed Samples: {checkpoint_state.get('total_samples_completed', 0)}")
+        print("="*80 + "\n")
+    
     threshold_in_current_units = negative_phonon_threshold_thz
     if args.units == "cm-1":
         threshold_in_current_units *= 33.35641
@@ -1167,10 +1353,24 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
         supercell_variants = [(2,2,2)] # Default to primitive if no q-point info
         print("No q-point information for softest mode. Defaulting to (2,2,2) supercell.")
 
-    all_iterations_results = [] # To store results for all iterations
+    # Restore state from checkpoint if available
+    if resume_from_checkpoint:
+        all_iterations_results = checkpoint_full.get('results', [])
+        if checkpoint_full.get('current_primitive_atoms'):
+            current_primitive_atoms = checkpoint_full['current_primitive_atoms']
+        if checkpoint_full.get('current_softest_modes'):
+            softest_modes_info_list = checkpoint_full['current_softest_modes']
+        print(f"Restored {len(all_iterations_results)} previous results from checkpoint")
+    else:
+        all_iterations_results = [] # To store results for all iterations
 
     # --- 2. Main Iterative Loop (Traditional Grid Search) ---
-    for iteration_idx in range(1, max_iterations + 1):
+    start_iteration = 1
+    if resume_from_checkpoint:
+        start_iteration = checkpoint_state.get('iteration', 1)
+        print(f"Resuming from iteration {start_iteration}")
+    
+    for iteration_idx in range(start_iteration, max_iterations + 1):
         print(f"\n### Starting Traditional Iteration {iteration_idx} ###")
         
         if len(softest_modes_info_list) == 0:
@@ -1185,6 +1385,15 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
             for cell_scale in cell_scale_factors:  
                 for ratio_mode2_to_mode1 in mode2_ratio_scales: # New loop for the second mode ratio  
                     sample_counter += 1  
+
+                    if resume_from_checkpoint:
+                        current_state_check = {
+                            'iteration': iteration_idx,
+                            'sample_index': sample_counter
+                        }
+                        if should_skip_sample(checkpoint_state, current_state_check, 'traditional'):
+                            print(f"\n  ⏭ Skipping sample {sample_counter} (already completed in checkpoint)")
+                            continue
                     # Convert simple cell_scale to a 6-element vector (only a,b,c scaled equally, angles unchanged)  
                     cell_transformation_vector = (cell_scale, cell_scale, cell_scale, 0.0, 0.0, 0.0)  
   
@@ -1194,18 +1403,21 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                     print(f"\n  Generating and relaxing structure for Traditional sample {sample_counter} (Iter {iteration_idx}):")  
                     print(f"    Mode1 Scale: {disp_scale:.3f}, Mode2 Ratio: {ratio_mode2_to_mode1:.3f}, Cell Transform: {cell_transformation_vector}")  
   
-                    # Generate displaced supercells  
-                    generated_cif_paths = generate_displaced_supercells(  
-                        current_primitive_atoms.copy(),  
-                        softest_modes_info_list,  
-                        disp_scale,  
-                        ratio_mode2_to_mode1, # Now using the looped ratio  
-                        supercell_variants, # Use the q-point commensurate supercell  
-                        sample_output_dir,  
+                    # Generate displaced supercells
+                    generated_cif_paths = generate_displaced_supercells(
+                        current_primitive_atoms.copy(),
+                        softest_modes_info_list,
+                        disp_scale,
+                        ratio_mode2_to_mode1, # Now using the looped ratio
+                        supercell_variants, # Use the q-point commensurate supercell
+                        sample_output_dir,
                         iteration_idx,
-                        original_prefix,  
-                        cell_transformation_vector  
-                    )  
+                        original_prefix,
+                        cell_transformation_vector,
+                        use_phase_factor=True,
+                        mutation_data=None,
+                        max_atoms_per_supercell=getattr(args, 'max_atoms_per_supercell', None)
+                    )
   
                     if not generated_cif_paths:  
                         print(f"    No CIFs generated for sample {sample_counter}. Skipping relaxation.")  
@@ -1219,11 +1431,15 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                         })  
                         continue  
   
-                    unique_supercell_folders = list(set(os.path.dirname(fpath) for fpath in generated_cif_paths))  
-                    sample_relaxation_results = []  
-                    for folder in unique_supercell_folders:  
-                        folder_relaxation_results = relax_structures_in_folder(folder, calculator, args.engine, args.fmax)  
-                        sample_relaxation_results.extend(folder_relaxation_results)  
+                    unique_supercell_folders = list(set(os.path.dirname(fpath) for fpath in generated_cif_paths))
+                    sample_relaxation_results = []
+                    for folder in unique_supercell_folders:
+                        folder_relaxation_results = relax_structures_in_folder(
+                            folder, calculator, args.engine, args.fmax,
+                            relaxation_patience=getattr(args, 'relaxation_patience', 5),
+                            volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
+                        )
+                        sample_relaxation_results.extend(folder_relaxation_results)
   
                     if not sample_relaxation_results:  
                         print(f"    No structures successfully relaxed for sample {sample_counter}.")  
@@ -1251,7 +1467,20 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                             'iteration': iteration_idx,  
                             'sample': sample_counter  
                         })  
-                        print(f"    Sample {sample_counter} relaxed. Lowest energy: {best_result_for_sample['energy_per_atom']:.6f} eV/atom")  
+                        print(f"    Sample {sample_counter} relaxed. Lowest energy: {best_result_for_sample['energy_per_atom']:.6f} eV/atom")
+                        
+                        # Save checkpoint after each successful sample
+                        try:
+                            checkpoint_manager.save_checkpoint_traditional(
+                                iteration=iteration_idx,
+                                sample_index=sample_counter,
+                                all_iterations_results=all_iterations_results + iteration_results,
+                                current_primitive_atoms=current_primitive_atoms,
+                                current_softest_modes=softest_modes_info_list
+                            )
+                            checkpoint_manager.cleanup_old_checkpoints(keep_last_n=5)
+                        except Exception as e:
+                            print(f"    ⚠ Warning: Failed to save checkpoint: {e}")
                     else:  
                         print(f"    Could not find lowest energy for sample {sample_counter}.")  
                         iteration_results.append({  
@@ -1626,7 +1855,7 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
     """
     print("\n--- Running Soft Mode Iterative Optimization (Traditional All Method) ---")
 
-    calculator = initialize_calculator(args.engine, args.model_name)
+    calculator = initialize_calculator(args.engine, model_name=args.model_name, checkpoint_path=args.checkpoint, nep_model_path=args.nep_model, checkpoint_model_path=args.checkpoint_model)
     if calculator is None:
         print("Failed to initialize calculator. Exiting.")
         return
@@ -1635,8 +1864,36 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
     current_primitive_atoms = initial_atoms_for_soft_mode_analysis.copy()
     current_softest_modes_info_list = softest_modes_info_list.copy()
 
-    # Store all results across iterations
-    all_iterations_results = []
+    # Initialize checkpoint manager
+    checkpoint_manager = CheckpointManager(base_output_dir, 'traditional_all')
+    
+    # Try to load existing checkpoint
+    checkpoint_data = checkpoint_manager.load_latest_checkpoint()
+    checkpoint_state = None
+    resume_from_checkpoint = False
+    
+    if checkpoint_data:
+        checkpoint_full, checkpoint_state = checkpoint_data
+        resume_from_checkpoint = True
+        print("\n" + "="*80)
+        print("RESUMING FROM CHECKPOINT")
+        print("="*80)
+        print(f"Iteration: {checkpoint_state.get('iteration', 1)}")
+        print(f"Pairing Index: {checkpoint_state.get('pairing_index', 0)}")
+        print(f"Config Index: {checkpoint_state.get('config_index', 0)}")
+        print(f"Sample Index: {checkpoint_state.get('sample_index', 0)}")
+        print("="*80 + "\n")
+    
+    # Restore state from checkpoint if available
+    if resume_from_checkpoint:
+        all_iterations_results = checkpoint_full.get('results', [])
+        if checkpoint_full.get('current_primitive_atoms'):
+            current_primitive_atoms = checkpoint_full['current_primitive_atoms']
+        if checkpoint_full.get('current_softest_modes'):
+            current_softest_modes_info_list = checkpoint_full['current_softest_modes']
+        print(f"Restored {len(all_iterations_results)} previous results from checkpoint")
+    else:
+        all_iterations_results = []
 
     for iteration_idx in range(1, max_iterations + 1):
         print(f"\n{'='*60}")
@@ -1691,6 +1948,9 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
         all_structures_info = []  # Track all structures (successful and failed)
 
         for pairing_idx, (softest_mode, other_mode) in enumerate(mode_pairings):
+            if resume_from_checkpoint and checkpoint_state.get('iteration', 0) == iteration_idx:
+                if pairing_idx < checkpoint_state.get('pairing_index', 0):
+                    continue
             try:
                 print(f"\n--- Processing Pairing {pairing_idx+1}/{len(mode_pairings)}: {softest_mode.get('label', 'unknown')} + {other_mode.get('label', 'unknown')} ---")
 
@@ -1747,6 +2007,10 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
 
             # Process both original and swapped configurations
             for config_idx, config in enumerate(configurations):
+                if resume_from_checkpoint and checkpoint_state.get('iteration', 0) == iteration_idx and \
+                  checkpoint_state.get('pairing_index', 0) == pairing_idx:
+                    if config_idx < checkpoint_state.get('config_index', 0):
+                        continue
                 try:
                     config_name = config['name']
                     config_dir = os.path.join(base_output_dir, f"iter_{iteration_idx}", config_name)
@@ -1802,6 +2066,16 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                     for cell_scale in cell_scale_factors:
                         for ratio_mode2_to_mode1 in mode2_ratio_scales:
                             sample_counter += 1
+                            if resume_from_checkpoint:
+                                current_state_check = {
+                                    'iteration': iteration_idx,
+                                    'pairing_index': pairing_idx,
+                                    'config_index': config_idx,
+                                    'sample_index': sample_counter
+                                }
+                                if should_skip_sample(checkpoint_state, current_state_check, 'traditional_all'):
+                                    print(f"      ⏭ Skipping sample {sample_counter} (already completed)")
+                                    continue
                             cell_transformation_vector = (cell_scale, cell_scale, cell_scale, 0.0, 0.0, 0.0)
 
                             sample_output_dir = os.path.join(config_dir, f"sample_{sample_counter}")
@@ -1836,7 +2110,10 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                                     sample_output_dir,
                                     iteration_idx,
                                     config_prefix,
-                                    cell_transformation_vector
+                                    cell_transformation_vector,
+                                    use_phase_factor=True,
+                                    mutation_data=None,
+                                    max_atoms_per_supercell=getattr(args, 'max_atoms_per_supercell', None)
                                 )
 
                                 if not generated_cif_paths:
@@ -1846,7 +2123,8 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                                 # Relax the generated structures
                                 relaxed_structures_info = relax_structures_in_folder(
                                     sample_output_dir, calculator, args.engine, args.fmax,
-                                    relaxation_patience=getattr(args, 'relaxation_patience', 5)
+                                    relaxation_patience=getattr(args, 'relaxation_patience', 5),
+                                    volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
                                 )
 
                                 if relaxed_structures_info:
@@ -1918,6 +2196,21 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                                     })
 
                                     print(f"        Sample {sample_counter} completed. Energy: {lowest_energy_info['energy_per_atom']:.6f} eV/atom")
+                                    
+                                    # Save checkpoint after each successful sample
+                                    try:
+                                        checkpoint_manager.save_checkpoint_traditional_all(
+                                            iteration=iteration_idx,
+                                            pairing_index=pairing_idx,
+                                            config_index=config_idx,
+                                            sample_index=sample_counter,
+                                            all_iterations_results=all_iterations_results + [sample_result],
+                                            current_primitive_atoms=current_primitive_atoms,
+                                            current_softest_modes=current_softest_modes_info_list
+                                        )
+                                        checkpoint_manager.cleanup_old_checkpoints(keep_last_n=5)
+                                    except Exception as e:
+                                        print(f"        ⚠ Warning: Failed to save checkpoint: {e}")
                                 else:
                                     print(f"        Sample {sample_counter} failed during relaxation.")
                                     # Extract detailed soft mode information for failed structure
@@ -2469,7 +2762,7 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
     print(f"Maximum iterations: {max_iterations}")
 
     # Initialize calculator
-    calculator = initialize_calculator(args.engine, args.model_name)
+    calculator = initialize_calculator(args.engine, model_name=args.model_name, checkpoint_path=args.checkpoint, nep_model_path=args.nep_model, checkpoint_model_path=args.checkpoint_model)
     if calculator is None:
         print("Failed to initialize calculator. Exiting.")
         return
@@ -2495,8 +2788,41 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
     # Get original prefix for file naming
     original_prefix = os.path.splitext(os.path.basename(args.cif))[0]
 
+    # Initialize checkpoint manager
+    checkpoint_manager = CheckpointManager(base_output_dir, 'opt_random')
+    
+    # Try to load existing checkpoint
+    checkpoint_data = checkpoint_manager.load_latest_checkpoint()
+    checkpoint_state = None
+    resume_from_checkpoint = False
+    
+    if checkpoint_data:
+        checkpoint_full, checkpoint_state = checkpoint_data
+        resume_from_checkpoint = True
+        print("\n" + "="*80)
+        print("RESUMING FROM CHECKPOINT")
+        print("="*80)
+        print(f"Iteration: {checkpoint_state.get('iteration', 1)}")
+        print(f"Sample Index: {checkpoint_state.get('sample_index', 0)}")
+        print(f"Completed Samples: {checkpoint_state.get('total_samples_completed', 0)}")
+        print("="*80 + "\n")
+    
+    # Restore state from checkpoint if available
+    if resume_from_checkpoint:
+        all_iterations_results = checkpoint_full.get('results', [])
+        current_best_supercell = checkpoint_full.get('current_best_supercell')
+        if checkpoint_full.get('current_primitive_atoms'):
+            current_primitive_atoms = checkpoint_full['current_primitive_atoms']
+        print(f"Restored {len(all_iterations_results)} previous results from checkpoint")
+        print(f"Restored best supercell: {current_best_supercell}")
+
     # Main iteration loop
-    for iteration_idx in range(1, max_iterations + 1):
+    start_iteration = 1
+    if resume_from_checkpoint:
+        start_iteration = checkpoint_state.get('iteration', 1)
+        print(f"Resuming from iteration {start_iteration}")
+    
+    for iteration_idx in range(start_iteration, max_iterations + 1):
         # Generate supercell variants only in the first iteration (iter_0 equivalent)
         if iteration_idx == 1:
             supercell_variants = generate_comprehensive_supercell_variants(max_size=2)
@@ -2525,6 +2851,16 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
         # Generate random structures for this iteration
         for sample_idx in range(samples_this_iteration):
             sample_counter = sample_idx + 1
+
+            if resume_from_checkpoint:
+                current_state_check = {
+                    'iteration': iteration_idx,
+                    'sample_index': sample_counter
+                }
+                if should_skip_sample(checkpoint_state, current_state_check, 'opt_random'):
+                    print(f"\n  ⏭ Skipping sample {sample_counter} (already completed in checkpoint)")
+                    continue
+
             print(f"\n  Generating random structure {sample_counter}/{samples_this_iteration} (Iteration {iteration_idx} - {phase_name})")
 
             # Create sample directory
@@ -2585,7 +2921,8 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                     original_prefix,
                     cell_transformation_vector,
                     random_cell_perturbation,
-                    random_seed + iteration_idx * 1000 + sample_idx if random_seed is not None else None
+                    random_seed + iteration_idx * 1000 + sample_idx if random_seed is not None else None,
+                    max_atoms_per_supercell=getattr(args, 'max_atoms_per_supercell', None)
                 )
 
                 if not generated_cif_paths:
@@ -2595,7 +2932,8 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                 # Relax the generated structures
                 relaxed_structures_info = relax_structures_in_folder(
                     sample_output_dir, calculator, args.engine, args.fmax,
-                    relaxation_patience=getattr(args, 'relaxation_patience', 5)
+                    relaxation_patience=getattr(args, 'relaxation_patience', 5),
+                    volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
                 )
 
                 if not relaxed_structures_info:
@@ -2624,6 +2962,19 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                     })
 
                     print(f"        Sample {sample_counter} completed: {best_result_for_sample['energy_per_atom']:.6f} eV/atom")
+                    
+                    # Save checkpoint after each successful sample
+                    try:
+                        checkpoint_manager.save_checkpoint_opt_random(
+                            iteration=iteration_idx,
+                            sample_index=sample_counter,
+                            all_iterations_results=all_iterations_results + iteration_results,
+                            current_primitive_atoms=current_primitive_atoms,
+                            current_best_supercell=selected_supercell
+                        )
+                        checkpoint_manager.cleanup_old_checkpoints(keep_last_n=5)
+                    except Exception as e:
+                        print(f"        ⚠ Warning: Failed to save checkpoint: {e}")
 
             except Exception as e:
                 print(f"        Error processing sample {sample_counter}: {e}")
@@ -3113,7 +3464,7 @@ def run_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft
         return
 
     # Initialize calculator
-    calculator = initialize_calculator(args.engine, args.model_name)
+    calculator = initialize_calculator(args.engine, model_name=args.model_name, checkpoint_path=args.checkpoint, nep_model_path=args.nep_model, checkpoint_model_path=args.checkpoint_model)
 
     # Create output directory for NEB optimization
     neb_output_dir = os.path.join(base_output_dir, "neb_optimization")
@@ -3135,7 +3486,8 @@ def run_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft
         args.fmax,
         initial_relax_dir,
         args.cif,
-        relaxation_patience=getattr(args, 'relaxation_patience', 5)
+        relaxation_patience=getattr(args, 'relaxation_patience', 5),
+        volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
     )
 
     if relaxed_initial_atoms is None:
@@ -3153,7 +3505,8 @@ def run_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft
         args.fmax,
         final_relax_dir,
         final_cif_path,
-        relaxation_patience=getattr(args, 'relaxation_patience', 5)
+        relaxation_patience=getattr(args, 'relaxation_patience', 5),
+        volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
     )
 
     if relaxed_final_atoms is None:
@@ -3334,7 +3687,7 @@ def run_ci_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_s
         return
 
     # Initialize calculator
-    calculator = initialize_calculator(args.engine, args.model_name)
+    calculator = initialize_calculator(args.engine, model_name=args.model_name, checkpoint_path=args.checkpoint, nep_model_path=args.nep_model, checkpoint_model_path=args.checkpoint_model)
 
     # Create output directory for CI-NEB optimization
     ci_neb_output_dir = os.path.join(base_output_dir, "ci_neb_optimization")
@@ -3356,7 +3709,8 @@ def run_ci_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_s
         args.fmax,
         initial_relax_dir,
         args.cif,
-        relaxation_patience=getattr(args, 'relaxation_patience', 5)
+        relaxation_patience=getattr(args, 'relaxation_patience', 5),
+        volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
     )
 
     if relaxed_initial_atoms is None:
@@ -3374,7 +3728,8 @@ def run_ci_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_s
         args.fmax,
         final_relax_dir,
         final_cif_path,
-        relaxation_patience=getattr(args, 'relaxation_patience', 5)
+        relaxation_patience=getattr(args, 'relaxation_patience', 5),
+        volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
     )
 
     if relaxed_final_atoms is None:
@@ -3552,7 +3907,7 @@ def run_md_stability_analysis(args, base_output_dir, initial_atoms_for_analysis)
     print("\n--- Running AIMD Stability Analysis ---")
 
     # Initialize calculator
-    calculator = initialize_calculator(args.engine, args.model_name)
+    calculator = initialize_calculator(args.engine, model_name=args.model_name, checkpoint_path=args.checkpoint, nep_model_path=args.nep_model, checkpoint_model_path=args.checkpoint_model)
     if calculator is None:
         print("Failed to initialize calculator. Exiting MD stability analysis.")
         return

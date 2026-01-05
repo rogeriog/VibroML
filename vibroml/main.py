@@ -3,6 +3,7 @@ import time
 import json
 import sys
 import numpy as np
+from ase.io import read
 # Ensure all necessary functions are imported from utils.utils
 from .utils.utils import clean_phonon_cache, get_arg_parser_and_settings, parse_supercell_dimensions, parse_cli_screen_supercell_ns, parse_screen_supercell_ns, load_default_settings
 # Import the optimization functions from auto_optimize
@@ -129,79 +130,107 @@ def main():
 
     print("\n--- Initilization: Setting up Output Directory and Cleaning Cache ---")
     cif_filename_base = os.path.splitext(os.path.basename(args.cif))[0]
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    
+    # --- RESUME LOGIC START ---
+    # Detect if we are resuming from an existing directory
+    if args.resume_dir:
+        output_dir = os.path.abspath(args.resume_dir)
+        if not os.path.exists(output_dir):
+            print(f"Error: Resume directory not found: {output_dir}")
+            sys.exit(1)
+        print(f"RESUMING from existing directory: {output_dir}")
+        # Note: We rely on CLI args being consistent with the original run, or loaded from
+        # initial_settings.json manually if you want strict enforcement.
+        # Here we just use the provided CLI args but point to the old folder.
+    else:
+        # Standard New Run behavior
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
 
-    # Add method suffix to output folder name
-    method_suffix_map = {
-        "traditional": "_TRADITIONAL",
-        "ga": "_GA",
-        "traditional_all": "_TRADITIONAL_ALL",
-        "opt_random": "_OPT_RANDOM",
-        "neb": "_NEB",
-        "ci_neb": "_CI_NEB",
-        "md_stability": "_MD_STABILITY"
-    }
-    method_suffix = method_suffix_map.get(args.method, "")
+        # Add engine suffix to output folder name
+        engine_suffix_map = {
+            "mace": "_MACE",
+            "m3gnet": "_M3GNET",
+            "esen": "_ESEN",
+            "uma": "_UMA",
+            "gpumd": "_GPUMD",
+            "nep": "_NEP",          # calorine/NEP engine via CPUNEP
+            "calorine": "_CALORINE",
+        }
+        engine_suffix = engine_suffix_map.get(args.engine, f"_{args.engine.upper()}")
 
-    # Add custom prefix if provided
-    prefix_part = ""
-    if hasattr(args, 'output_prefix') and args.output_prefix:
-        prefix_part = f"{args.output_prefix}_"
+        # Add method suffix to output folder name
+        method_suffix_map = {
+            "traditional": "_TRADITIONAL",
+            "ga": "_GA",
+            "traditional_all": "_TRADITIONAL_ALL",
+            "opt_random": "_OPT_RANDOM",
+            "neb": "_NEB",
+            "ci_neb": "_CI_NEB",
+            "md_stability": "_MD_STABILITY"
+        }
+        method_suffix = method_suffix_map.get(args.method, "")
 
-    output_folder_name = f"{prefix_part}{cif_filename_base}{method_suffix}_phonon_output_{timestamp}"
-    output_dir = os.path.join(os.getcwd(), output_folder_name)
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"Output directory created: {output_dir}")
+        # Add custom prefix if provided
+        prefix_part = ""
+        if hasattr(args, 'output_prefix') and args.output_prefix:
+            prefix_part = f"{args.output_prefix}_"
 
-    # Clean up any old phonon cache files
-    clean_phonon_cache()
+        output_folder_name = f"{prefix_part}{cif_filename_base}{engine_suffix}{method_suffix}_phonon_output_{timestamp}"
+        output_dir = os.path.join(os.getcwd(), output_folder_name)
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Output directory created: {output_dir}")
 
-    # Save initial settings (filter based on method)
-    settings_to_save = vars(args).copy()
+        # Clean up any old phonon cache files (only for new runs to ensure fresh start)
+        clean_phonon_cache()
 
-    # Remove method-specific parameters that don't apply to the selected method
-    if args.method == "traditional":
-        # Remove GA-specific and NEB-specific parameters for traditional method
-        non_traditional_params = [
-            "ga_population_size", "ga_mutation_rate", "num_new_points_per_iteration",
-            "ga_disp_scale_bounds", "ga_ratio_bounds", "ga_cell_scale_bounds", "ga_cell_angle_bounds",
-            "final_cif", "neb_num_images", "neb_spring_constant", "neb_max_iterations",
-            "neb_force_tolerance", "neb_climbing_start_iteration"
-        ]
-        for param in non_traditional_params:
-            settings_to_save.pop(param, None)
-    elif args.method in ["ga", "traditional_all", "opt_random"]:
-        # Remove NEB-specific and MD-specific parameters for non-NEB/non-MD methods
-        neb_specific_params = [
-            "final_cif", "neb_num_images", "neb_spring_constant", "neb_max_iterations",
-            "neb_force_tolerance", "neb_climbing_start_iteration"
-        ]
-        md_specific_params = [
-            "temp", "pressure", "time", "supercell_size", "equilibration_fraction"
-        ]
-        for param in neb_specific_params + md_specific_params:
-            settings_to_save.pop(param, None)
-    elif args.method == "md_stability":
-        # Remove NEB-specific parameters for MD method
-        neb_specific_params = [
-            "final_cif", "neb_num_images", "neb_spring_constant", "neb_max_iterations",
-            "neb_force_tolerance", "neb_climbing_start_iteration"
-        ]
-        for param in neb_specific_params:
-            settings_to_save.pop(param, None)
-    elif args.method in ["neb", "ci_neb"]:
-        # Remove GA-specific and soft-mode-specific parameters for NEB methods
-        non_neb_params = [
-            "ga_population_size", "ga_mutation_rate", "num_new_points_per_iteration",
-            "ga_disp_scale_bounds", "ga_ratio_bounds", "ga_cell_scale_bounds", "ga_cell_angle_bounds",
-            "soft_mode_displacement_scales", "mode2_ratio_scales", "cell_scale_factors"
-        ]
-        for param in non_neb_params:
-            settings_to_save.pop(param, None)
+        # Save initial settings (filter based on method)
+        settings_to_save = vars(args).copy()
 
-    with open(os.path.join(output_dir, "initial_settings.json"), 'w') as f:
-        json.dump(settings_to_save, f, indent=4)
-    print(f"Initial settings saved to {os.path.join(output_dir, 'initial_settings.json')}")
+        # Remove method-specific parameters that don't apply to the selected method
+        if args.method == "traditional":
+            # Remove GA-specific and NEB-specific parameters for traditional method
+            non_traditional_params = [
+                "ga_population_size", "ga_mutation_rate", "num_new_points_per_iteration",
+                "ga_disp_scale_bounds", "ga_ratio_bounds", "ga_cell_scale_bounds", "ga_cell_angle_bounds",
+                "final_cif", "neb_num_images", "neb_spring_constant", "neb_max_iterations",
+                "neb_force_tolerance", "neb_climbing_start_iteration"
+            ]
+            for param in non_traditional_params:
+                settings_to_save.pop(param, None)
+        elif args.method in ["ga", "traditional_all", "opt_random"]:
+            # Remove NEB-specific and MD-specific parameters for non-NEB/non-MD methods
+            neb_specific_params = [
+                "final_cif", "neb_num_images", "neb_spring_constant", "neb_max_iterations",
+                "neb_force_tolerance", "neb_climbing_start_iteration"
+            ]
+            md_specific_params = [
+                "temp", "pressure", "time", "supercell_size", "equilibration_fraction"
+            ]
+            for param in neb_specific_params + md_specific_params:
+                settings_to_save.pop(param, None)
+        elif args.method == "md_stability":
+            # Remove NEB-specific parameters for MD method
+            neb_specific_params = [
+                "final_cif", "neb_num_images", "neb_spring_constant", "neb_max_iterations",
+                "neb_force_tolerance", "neb_climbing_start_iteration"
+            ]
+            for param in neb_specific_params:
+                settings_to_save.pop(param, None)
+        elif args.method in ["neb", "ci_neb"]:
+            # Remove GA-specific and soft-mode-specific parameters for NEB methods
+            non_neb_params = [
+                "ga_population_size", "ga_mutation_rate", "num_new_points_per_iteration",
+                "ga_disp_scale_bounds", "ga_ratio_bounds", "ga_cell_scale_bounds", "ga_cell_angle_bounds",
+                "soft_mode_displacement_scales", "mode2_ratio_scales", "cell_scale_factors"
+            ]
+            for param in non_neb_params:
+                settings_to_save.pop(param, None)
+
+        with open(os.path.join(output_dir, "initial_settings.json"), 'w') as f:
+            json.dump(settings_to_save, f, indent=4)
+        print(f"Initial settings saved to {os.path.join(output_dir, 'initial_settings.json')}")
+    
+    # --- END OF RESUME LOGIC BLOCK ---
     
     ###############################################
     print("\n--- Step 1: Loading and potentially relaxing initial structure for single run ---")
@@ -212,64 +241,215 @@ def main():
         print("Failed to load initial structure. Exiting.")
         sys.exit(1)
 
-    calculator = initialize_calculator(args.engine, model_name=args.model_name)
+    calculator = initialize_calculator(args.engine, model_name=args.model_name, checkpoint_path=args.checkpoint, nep_model_path=args.nep_model, checkpoint_model_path=args.checkpoint_model)
     if calculator is None:
         print("Failed to initialize calculator. Exiting.")
         sys.exit(1)
 
     current_atoms = initial_atoms.copy()
-    if not args.no_relax:
-        initial_relax_dir = os.path.join(output_dir, "initial_relaxation_for_single_run")
+    
+    # --- RESUME LOGIC: Check for existing initial relaxation ---
+    initial_relax_dir = os.path.join(output_dir, "initial_relaxation_for_single_run")
+    relaxation_done = False
+    
+    if args.resume_dir and os.path.exists(initial_relax_dir):
+        # Look for the relaxed file
+        relaxed_files = [f for f in os.listdir(initial_relax_dir) if "_relaxed.cif" in f]
+        if relaxed_files:
+            relaxed_cif = os.path.join(initial_relax_dir, relaxed_files[0])
+            print(f"Resuming: Found existing relaxed structure: {relaxed_files[0]}")
+            try:
+                current_atoms = read(relaxed_cif)
+                relaxation_done = True
+            except Exception as e:
+                print(f"Warning: Could not load existing relaxed structure: {e}. Re-running relaxation.")
+
+    if not relaxation_done and not args.no_relax:
         os.makedirs(initial_relax_dir, exist_ok=True)
-        current_atoms = relax_structure(initial_atoms.copy(), calculator, args.engine, args.fmax, initial_relax_dir, args.cif, relaxation_patience=getattr(args, 'relaxation_patience', 5))
+        current_atoms = relax_structure(
+            initial_atoms.copy(), calculator, args.engine, args.fmax, initial_relax_dir, args.cif,
+            relaxation_patience=getattr(args, 'relaxation_patience', 5),
+            volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
+        )
         if current_atoms is None:
             print("Initial relaxation failed. Exiting single run.")
             sys.exit(1)
-    else:
+    elif not relaxation_done and args.no_relax:
         print("Skipping initial structure relaxation for single run.")
     
     ###############################################
-    running_mode = "Automatic Soft Mode Optimization" if args.auto else "Phonon Calculation Only"
+    # Determine running mode based on --auto flag and --method
+    # If --auto is specified, run parameter sweep + optimization
+    # If --method is an optimization method (ga, traditional, traditional_all, opt_random), run optimization without sweep
+    # Otherwise, run phonon-only mode
+    optimization_methods = ["ga", "traditional", "traditional_all", "opt_random"]
+    is_optimization_method = args.method in optimization_methods
+
+    if args.auto:
+        running_mode = "Automatic Soft Mode Optimization (with parameter sweep)"
+    elif is_optimization_method:
+        running_mode = f"Direct {args.method.upper()} Optimization (without parameter sweep)"
+    else:
+        running_mode = "Phonon Calculation Only"
+
     print(f"\n--- Step 2: Running Mode is {running_mode} ---")
     ###############################################
-    
+
     if args.auto:
-        print("\n--- Step 3: Running Phonon Calculation Sweep Optimization ---")
-        best_negative_frequency, best_settings, best_softest_modes_info, best_relaxed_atoms_from_sweep = run_phonon_calculation_sweep_optimization(  
-            args,  
-            output_dir,  
-            current_atoms.copy(), # Pass the relaxed initial atoms  
-            calculator,  
-            cif_filename_base,  
-            args.screen_supercell_ns,  
-            args.screen_deltas,  
-            args.screen_fmax_values,  
-            args.negative_phonon_threshold_thz,  
-            args.phonon_path_npoints,  
-            args.phonon_dos_grid,  
-            args.traj_kT,  
-            args.num_modes_to_return,  
-        )
+        # --- SWEEP RESUME LOGIC ---
+        # If resuming, check if sweep results already exist
+        sweep_results_file = os.path.join(output_dir, "auto_results.json")
+        skip_sweep = False
+        
+        # Initialize variables needed for step 4
+        best_negative_frequency = 0
+        best_settings = {}
+        best_softest_modes_info = []
+        best_relaxed_atoms_from_sweep = None
+
+        if args.resume_dir and os.path.exists(sweep_results_file):
+            print("\n--- Step 3: Resuming - Skipping Parameter Sweep ---")
+            print(f"Found existing sweep results: {sweep_results_file}")
+            try:
+                with open(sweep_results_file, 'r') as f:
+                    results = json.load(f)
+                
+                # Logic to determine best result from JSON (matching run_phonon_calculation_sweep_optimization logic)
+                best_negative_frequency = -float('inf')
+                best_result = None
+                
+                for res in results:
+                    freq = res.get("negative_frequency_at_special_point")
+                    # Note: We want the "most negative" frequency that is greater than negative infinity.
+                    # The original code tracks best_negative_frequency initialized to -inf and updates if current > best.
+                    if freq is not None and freq > best_negative_frequency:
+                        best_negative_frequency = freq
+                        best_result = res
+                
+                if best_result:
+                    print(f"Loaded best result from previous sweep: {best_negative_frequency:.4f} {args.units}")
+                    best_settings = {
+                        "supercell_dims": best_result.get("supercell_dims"), 
+                        "delta": best_result.get("delta"), 
+                        "fmax": best_result.get("fmax")
+                    }
+                    
+                    # We need the relaxed atoms from the sweep. They live in the specific N_D_F folder.
+                    # Reconstruct folder name:
+                    sc_dims = best_result.get("supercell_dims")
+                    if isinstance(sc_dims, list): sc_dims = tuple(sc_dims)
+                    sc_str = f"{sc_dims[0]}x{sc_dims[1]}x{sc_dims[2]}"
+                    sweep_folder = os.path.join(output_dir, f"N{sc_str}_D{best_result['delta']}_F{best_result['fmax']}")
+                    
+                    # Find the relaxed cif in that folder
+                    sweep_cifs = [f for f in os.listdir(sweep_folder) if "_relaxed" in f and f.endswith(".cif")]
+                    if sweep_cifs:
+                        best_relaxed_atoms_from_sweep = read(os.path.join(sweep_folder, sweep_cifs[0]))
+                        print(f"Loaded relaxed atoms from sweep folder: {sweep_cifs[0]}")
+                        
+                        # Note: best_softest_modes_info is harder to reconstruct purely from JSON without
+                        # re-parsing everything, but if a checkpoint exists, Step 4 will prioritize that anyway.
+                        # We set it to empty list as a placeholder; CheckpointManager in run_automatic... handles the rest.
+                        # This list must be non-empty to pass the check in run_automatic_soft_mode_optimization.
+                        # The real modes will be loaded from the checkpoint manager later.
+                        best_softest_modes_info = [{'label': 'RESUME_PLACEHOLDER', 'frequency': -1.0, 'raw_displacements': [], 'coordinate': [0,0,0], 'band_index': 0}]
+                        skip_sweep = True
+                        
+                    else:
+                        print("Could not find relaxed structure in sweep folder. Re-running sweep.")
+            except Exception as e:
+                print(f"Error loading sweep results: {e}. Re-running sweep.")
+
+        if not skip_sweep:
+            print("\n--- Step 3: Running Phonon Calculation Sweep Optimization ---")
+            best_negative_frequency, best_settings, best_softest_modes_info, best_relaxed_atoms_from_sweep = run_phonon_calculation_sweep_optimization(
+                args,
+                output_dir,
+                current_atoms.copy(), # Pass the relaxed initial atoms
+                calculator,
+                cif_filename_base,
+                args.screen_supercell_ns,
+                args.screen_deltas,
+                args.screen_fmax_values,
+                args.negative_phonon_threshold_thz,
+                args.phonon_path_npoints,
+                args.phonon_dos_grid,
+                args.traj_kT,
+                args.num_modes_to_return,
+            )
+        
         print(f"Method for soft mode optimization: {args.method}")
 
-        print(f"\n--- Step 4: Running Automatic Soft Mode Optimization with method: {args.method} ---")  
-        run_automatic_soft_mode_optimization(  
-            args,  
-            output_dir,  
-            best_negative_frequency,  
-            best_settings,  
-            best_softest_modes_info,  
-            best_relaxed_atoms_from_sweep,  
-            args.negative_phonon_threshold_thz, # Pass threshold again for clarity  
-            args.soft_mode_max_iterations,  
+        print(f"\n--- Step 4: Running Automatic Soft Mode Optimization with method: {args.method} ---")
+        run_automatic_soft_mode_optimization(
+            args,
+            output_dir,
+            best_negative_frequency,
+            best_settings,
+            best_softest_modes_info,
+            best_relaxed_atoms_from_sweep,
+            args.negative_phonon_threshold_thz, # Pass threshold again for clarity
+            args.soft_mode_max_iterations,
             args.soft_mode_displacement_scales,
-            args.mode2_ratio_scales,  
-            args.soft_mode_num_top_structures_to_analyze,  
-            args.phonon_path_npoints,  
-            args.phonon_dos_grid,  
-            args.traj_kT,  
-            args.cell_scale_factors,  
-            args.num_modes_to_return,  
+            args.mode2_ratio_scales,
+            args.soft_mode_num_top_structures_to_analyze,
+            args.phonon_path_npoints,
+            args.phonon_dos_grid,
+            args.traj_kT,
+            args.cell_scale_factors,
+            args.num_modes_to_return,
+            args.ga_population_size,
+            args.ga_mutation_rate,
+            args.ga_generations,
+            args.num_new_points_per_iteration,
+            args.ga_disp_scale_bounds,
+            args.ga_ratio_bounds,
+            args.ga_cell_scale_bounds,
+            args.ga_cell_angle_bounds
+        )
+    elif is_optimization_method:
+        # Run optimization method directly without parameter sweep
+        print(f"\n--- Step 3: Running Direct {args.method.upper()} Optimization (without parameter sweep) ---")
+
+        # First, run a single phonon analysis to get softest modes
+        print(f"\n--- Step 3a: Running Initial Phonon Analysis ---")
+        softest_modes_info_list, bsmin, time_taken, tracked_k_points_data = run_single_phonon_analysis(
+            current_atoms.copy(),
+            calculator,
+            args.engine,
+            args.units,
+            args.supercell_dims,
+            args.delta,
+            args.fmax,
+            output_dir,
+            prefix=cif_filename_base,
+            phonon_path_npoints=args.phonon_path_npoints,
+            phonon_dos_grid=args.phonon_dos_grid,
+            traj_kT=args.traj_kT,
+            num_modes_to_return=args.num_modes_to_return,
+            negative_phonon_threshold=args.negative_phonon_threshold_thz,
+            save_yaml=args.save_yaml
+        )
+
+        # Now run the optimization workflow with the phonon results
+        print(f"\n--- Step 3b: Running {args.method.upper()} Optimization with method: {args.method} ---")
+        run_automatic_soft_mode_optimization(
+            args,
+            output_dir,
+            bsmin,  # Use the minimum frequency from phonon analysis
+            {"supercell_dims": args.supercell_dims, "delta": args.delta, "fmax": args.fmax},  # Use current settings
+            softest_modes_info_list,  # Use the softest modes from phonon analysis
+            current_atoms.copy(),  # Use the relaxed initial atoms
+            args.negative_phonon_threshold_thz,
+            args.soft_mode_max_iterations,
+            args.soft_mode_displacement_scales,
+            args.mode2_ratio_scales,
+            args.soft_mode_num_top_structures_to_analyze,
+            args.phonon_path_npoints,
+            args.phonon_dos_grid,
+            args.traj_kT,
+            args.cell_scale_factors,
+            args.num_modes_to_return,
             args.ga_population_size,
             args.ga_mutation_rate,
             args.ga_generations,
@@ -433,3 +613,6 @@ def main():
 
         
     print("\n--- Phonon Calculation Script Finished ---")
+
+if __name__ == "__main__":
+    main()

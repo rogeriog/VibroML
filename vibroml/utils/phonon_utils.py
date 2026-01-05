@@ -100,8 +100,10 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
       mock_ph = MockPhonons(atoms)
 
       # Generate the displaced supercell
+      # Note: max_atoms_per_supercell is not available in this context, so we pass None (no limit)
       displaced_supercell = generate_and_visualize_specific_mode_supercell_from_eigenmode(
-         atoms, eigenvector, q_point, band_idx, displacement_magnitude, output_dir, prefix, converted_frequency, units
+         atoms, eigenvector, q_point, band_idx, displacement_magnitude, output_dir, prefix, converted_frequency, units,
+         max_atoms_per_supercell=None
       )
 
       # Create a summary of the preloaded mode
@@ -782,26 +784,40 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
 
       # Iterate through all bands at this k-point to find negative frequencies
       for band_idx, freq in enumerate(freqs_at_kpt):
-         if freq < negative_phonon_threshold: # Only consider negative frequencies
+         # Skip None values or non-numeric values (can occur with some calculators)
+         if freq is None:
+            continue
+         try:
+            freq_val = float(freq)
+         except (TypeError, ValueError):
+            continue
+
+         # Only consider negative frequencies if threshold is provided
+         if negative_phonon_threshold is not None and freq_val < negative_phonon_threshold:
                mode_info = {
                   "label": label,
                   "coordinate": [float(c) for c in coord], # Convert numpy array to list for JSON
-                  "frequency": float(freq),
+                  "frequency": freq_val,
                   "band_index": int(band_idx),
                   "kpoint_index_in_path": int(kpt_index) # Store index in path.kpts
                }
                all_negative_modes_info.append(mode_info)
 
       # Also add the minimum frequency at this k-point to special_point_analysis (even if positive)
-      min_freq_at_kpt = np.min(freqs_at_kpt)
-      min_band_index_at_kpt = np.argmin(freqs_at_kpt)
-      special_point_analysis.append({
-         "label": label,
-         "coordinate": [float(c) for c in coord],
-         "min_frequency": float(min_freq_at_kpt),
-         "band_index": int(min_band_index_at_kpt)
-      })
-      print(f"   Special Point: {label} ({coord[0]:.4f}, {coord[1]:.4f}, {coord[2]:.4f}) - Minimum Frequency: {min_freq_at_kpt:.4f} {units}")
+      # Filter out None values before computing min
+      valid_freqs = [f for f in freqs_at_kpt if f is not None]
+      if valid_freqs:
+         min_freq_at_kpt = np.min(valid_freqs)
+         min_band_index_at_kpt = np.argmin(freqs_at_kpt)  # Use original array for index
+         special_point_analysis.append({
+            "label": label,
+            "coordinate": [float(c) for c in coord],
+            "min_frequency": float(min_freq_at_kpt),
+            "band_index": int(min_band_index_at_kpt)
+         })
+         print(f"   Special Point: {label} ({coord[0]:.4f}, {coord[1]:.4f}, {coord[2]:.4f}) - Minimum Frequency: {min_freq_at_kpt:.4f} {units}")
+      else:
+         print(f"   Special Point: {label} ({coord[0]:.4f}, {coord[1]:.4f}, {coord[2]:.4f}) - No valid frequencies found")
 
 
    # Sort all found negative modes by frequency (most negative first)
@@ -960,6 +976,7 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
                traj_kT=traj_kT,
                prefix="target_mode" # A generic prefix for the target mode
          )
+         # Note: max_atoms_per_supercell is not available in this context, so we pass None (no limit)
          generate_and_visualize_specific_mode_supercell(
             ph.atoms, # This is the primitive cell (potentially relaxed)
             ph,
@@ -967,7 +984,8 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
             target_band_idx,
             displacement_magnitude,
             output_dir,
-            prefix
+            prefix,
+            max_atoms_per_supercell=None
         )
       except Exception as e:
          print(f"Error processing target q-point {target_q_point}, mode {target_band_idx}: {e}")
@@ -1260,7 +1278,7 @@ def save_phonopy_band_yaml(ph, path, bs, all_k_point_distances, output_dir, pref
         print(f"   Error saving band.yaml file: {e}")
         import traceback
         traceback.print_exc()     
-def generate_and_visualize_specific_mode_supercell(primitive_atoms, ph_obj, q_point, band_idx, displacement_magnitude, output_base_dir, original_prefix):
+def generate_and_visualize_specific_mode_supercell(primitive_atoms, ph_obj, q_point, band_idx, displacement_magnitude, output_base_dir, original_prefix, max_atoms_per_supercell=None):
    """
    Generates a single displaced supercell for a specific q-point and mode,
    and visualizes the mode.
@@ -1273,6 +1291,7 @@ def generate_and_visualize_specific_mode_supercell(primitive_atoms, ph_obj, q_po
       displacement_magnitude (float): The desired magnitude of displacement in Angstroms.
       output_base_dir (str): The main output directory.
       original_prefix (str): The base filename prefix of the original structure.
+      max_atoms_per_supercell (int): Maximum number of atoms allowed in supercells (None = no limit).
 
    Returns:
       ase.atoms.Atoms: The generated displaced supercell atoms object, or None if generation fails.
@@ -1295,6 +1314,12 @@ def generate_and_visualize_specific_mode_supercell(primitive_atoms, ph_obj, q_po
 
    # 2. Estimate commensurate supercell size
    supercell_dims = estimate_commensurate_supercell_size(q_point)
+
+   # Apply atom count constraint if specified
+   if max_atoms_per_supercell is not None:
+      from .structure_utils import filter_supercells_by_atom_count
+      supercell_dims = filter_supercells_by_atom_count(primitive_atoms, [supercell_dims], max_atoms_per_supercell)[0]
+
    sc_n1, sc_n2, sc_n3 = supercell_dims
    supercell_matrix = np.diag(np.array(supercell_dims))
 
@@ -1403,7 +1428,7 @@ def generate_and_visualize_specific_mode_supercell(primitive_atoms, ph_obj, q_po
    print("\n--- Specific Mode Supercell Generation and Visualization Complete ---")
    return displaced_supercell_atoms # Return the generated displaced supercell
 
-def generate_and_visualize_specific_mode_supercell_from_eigenmode(primitive_atoms, eigenvector, q_point, band_idx, displacement_magnitude, output_base_dir, original_prefix, frequency, units):
+def generate_and_visualize_specific_mode_supercell_from_eigenmode(primitive_atoms, eigenvector, q_point, band_idx, displacement_magnitude, output_base_dir, original_prefix, frequency, units, max_atoms_per_supercell=None):
    """
    Generates a single displaced supercell for a specific eigenmode loaded from band.yaml,
    and visualizes the mode.
@@ -1418,6 +1443,7 @@ def generate_and_visualize_specific_mode_supercell_from_eigenmode(primitive_atom
       original_prefix (str): The base filename prefix of the original structure.
       frequency (float): The frequency of the mode.
       units (str): Units for the frequency.
+      max_atoms_per_supercell (int): Maximum number of atoms allowed in supercells (None = no limit).
 
    Returns:
       ase.atoms.Atoms: The generated displaced supercell atoms object, or None if generation fails.
@@ -1435,6 +1461,12 @@ def generate_and_visualize_specific_mode_supercell_from_eigenmode(primitive_atom
 
    # Estimate commensurate supercell size
    supercell_dims = estimate_commensurate_supercell_size(q_point)
+
+   # Apply atom count constraint if specified
+   if max_atoms_per_supercell is not None:
+      from .structure_utils import filter_supercells_by_atom_count
+      supercell_dims = filter_supercells_by_atom_count(primitive_atoms, [supercell_dims], max_atoms_per_supercell)[0]
+
    sc_n1, sc_n2, sc_n3 = supercell_dims
    supercell_matrix = np.diag(np.array(supercell_dims))
 

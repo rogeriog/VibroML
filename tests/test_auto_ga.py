@@ -411,6 +411,62 @@ class TestAutoGAMode:
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] #### test_ga_vs_traditional_settings_difference PASSED ####")
         print("#"*80)
 
+    def test_ga_without_auto_flag(self):
+        """Test that GA method works without --auto flag (direct optimization)."""
+        print("\n" + "#"*80)
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] #### Running test_ga_without_auto_flag ####")
+        print("#"*80)
+
+        cif_filename = os.path.basename(self.test_cif_path)
+
+        # Test GA method WITHOUT --auto flag
+        ga_test_dir = os.path.join(self.current_test_dir, "ga_without_auto_test_case")
+        os.makedirs(ga_test_dir, exist_ok=True)
+        shutil.copy(self.test_cif_path, os.path.join(ga_test_dir, cif_filename))
+
+        ga_args = [
+            "--method", "ga", "--cif", cif_filename,  # NO --auto flag
+            "--fmax", "0.01", "--supercell", "1,1,1",
+            "--engine", "mace",
+            "--units", "THz",
+            "--ga_population_size", "4",
+            "--num_new_points_per_iteration", "2",
+            "--ga_mutation_rate", "0.1",
+            "--ga_generations", "2",
+            "--soft_mode_max_iterations", "1",
+            "--soft_mode_displacement_scales", "1.0",
+            "--soft_mode_num_top_structures_to_analyze", "1",
+            "--cell_scale_factors", "0.0",
+            "--mode2_ratio_scales", "0.0",
+            "--num_modes_to_return", "1",
+            "--no-relax"
+        ]
+
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] INFO: Running GA without --auto flag")
+        self._run_vibroml_command(ga_args, cwd=ga_test_dir)
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] INFO: GA command executed successfully.")
+
+        # Verify that GA workflow was executed (not just phonon-only)
+        # Output directory should have the GA method suffix
+        output_dirs = [d for d in os.listdir(ga_test_dir) if d.startswith("simple_cubic_GA_phonon_output_")]
+        assert len(output_dirs) == 1, f"Expected exactly one output directory with GA suffix, found {len(output_dirs)}. Available dirs: {os.listdir(ga_test_dir)}"
+        output_dir = os.path.join(ga_test_dir, output_dirs[0])
+
+        # Check that GA-specific output directories exist (indicating GA workflow ran)
+        ga_iteration_dirs = [d for d in os.listdir(output_dir) if d.startswith("ga_iteration_")]
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] INFO: Found GA iteration directories: {ga_iteration_dirs}")
+        assert len(ga_iteration_dirs) > 0, "No GA iteration directories found - GA workflow may not have executed"
+
+        # Check that final phonon analysis was performed
+        final_phonon_dirs = [d for d in os.listdir(output_dir) if d.startswith("final_phonon_analysis_")]
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] INFO: Found final phonon analysis directories: {final_phonon_dirs}")
+        assert len(final_phonon_dirs) > 0, "No final phonon analysis directories found"
+
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] INFO: GA workflow executed successfully without --auto flag")
+        print("\n" + "#"*80)
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] #### test_ga_without_auto_flag PASSED ####")
+        print("#"*80)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

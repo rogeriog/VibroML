@@ -9,10 +9,10 @@ from setuptools import setup, find_packages
 def read(fname):
     return open(os.path.join(os.path.abspath(os.path.dirname(__file__)), fname)).read()
 
-# Get the list of requirements from requirements.txt
+# Get the list of requirements from requirements.txt (core dependencies only)
 def get_requirements():
     with open('requirements.txt') as f:
-        return f.read().splitlines()
+        return [line.strip() for line in f.readlines() if line.strip() and not line.startswith('#')]
 
 setup(
     name="vibroml",
@@ -26,7 +26,18 @@ setup(
     packages=find_packages(exclude=["tests", "docs"]), # Automatically find packages in the 'vibroml' directory
     long_description=read('README.md'),
     long_description_content_type='text/markdown', # Specify the content type for README.md
-    install_requires=get_requirements(), # Use the function to get requirements
+    install_requires=get_requirements(), # Use the function to get core requirements only
+    extras_require={
+        'mace': ['mace-torch==0.3.13', 'torch==2.7.1', 'e3nn==0.4.4'],
+        'm3gnet': ['m3gnet==0.2.4', 'tensorflow==2.19.0'],
+        'all': [
+            'mace-torch==0.3.13',
+            'torch==2.7.1',
+            'e3nn==0.4.4',
+            'm3gnet==0.2.4',
+            'tensorflow==2.19.0',
+        ],
+    },
     classifiers=[
         "Development Status :: 3 - Alpha", # Change as your project matures
         "Topic :: Scientific/Engineering :: Physics",
