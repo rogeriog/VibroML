@@ -149,7 +149,7 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
    if ph is None:
       print("Error during phonon calculation setup.")
       return [], None, None # Return empty list for modes
-
+   
    print("\n--- Step 2: Getting and Processing Phonon Results ---")
    bs, path, dos, bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, discontinuities, y_label, bsmin = get_phonon_results(ph, atoms, units, phonon_path_npoints, phonon_dos_grid)
 
@@ -159,6 +159,11 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
        print("   YAML file saved.")
    else:
        print("   YAML file saving skipped (--save-yaml not provided).")
+   dos_data_combined = np.column_stack([dos_energies, dos.get_weights()])
+   dos_filename = os.path.join(output_dir, f"{prefix}_dos_curve.txt")
+   np.savetxt(dos_filename, dos_data_combined, header=f"Frequency({units})  DOS_Intensity")
+   print(f"    Saved full DOS curve to: {dos_filename}")
+   
    save_raw_data(bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, supercell_dims, delta, fmax, output_dir)
 
    print("\n--- Step 4: Plotting Results ---")
@@ -963,7 +968,36 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
       try:
          # Get frequency of the target mode
          omega_at_q, _ = ph.band_structure([target_q_point], modes=True)
-         freq_at_mode = omega_at_q[0, target_band_idx]
+         freq_ev = omega_at_q[0, target_band_idx]
+         
+         if units == "THz":
+             freq_at_mode = freq_ev / EV_TO_THZ_FACTOR
+         elif units == "cm-1":
+             freq_at_mode = (freq_ev / EV_TO_THZ_FACTOR) * THZ_TO_CM_FACTOR
+         elif units == "eV":
+             freq_at_mode = freq_ev
+         else:
+             freq_at_mode = freq_ev / EV_TO_THZ_FACTOR # Default to THz
+             
+         print(f"Manual Mode Frequency: {freq_ev:.6f} eV -> {freq_at_mode:.4f} {units}")
+
+         # Create a mode_info dict for the target mode to return to main.py for optimization
+         target_mode_info = {
+             "label": "User-Target",
+             "coordinate": [float(c) for c in target_q_point],
+             "frequency": float(freq_at_mode),
+             "band_index": int(target_band_idx),
+             # Use 0 as a placeholder for kpoint index if not in standard path
+             "kpoint_index_in_path": -1 
+         }
+         # Get raw displacements for this target mode
+         raw_disp = get_eigenvector_for_q_and_band_index(ph, np.array(target_q_point), target_band_idx)
+         if raw_disp is not None:
+             target_mode_info['raw_displacements'] = raw_disp.tolist()
+         
+         all_soft_modes_with_displacements.insert(0, target_mode_info)
+    
+         
 
          # Call the helper function for the target mode
          _process_and_save_mode_data(

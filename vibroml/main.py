@@ -296,116 +296,123 @@ def main():
     ###############################################
 
     if args.auto:
-        # --- SWEEP RESUME LOGIC ---
-        # If resuming, check if sweep results already exist
-        sweep_results_file = os.path.join(output_dir, "auto_results.json")
-        skip_sweep = False
-        
-        # Initialize variables needed for step 4
-        best_negative_frequency = 0
-        best_settings = {}
-        best_softest_modes_info = []
-        best_relaxed_atoms_from_sweep = None
-
-        if args.resume_dir and os.path.exists(sweep_results_file):
-            print("\n--- Step 3: Resuming - Skipping Parameter Sweep ---")
-            print(f"Found existing sweep results: {sweep_results_file}")
+        # --- NEW: Manual Soft Mode Override Check ---
+        if args.q is not None and args.band_idx is not None:
+            print(f"\n--- Manual Soft Mode Override Detected ---")
+            print(f"Skipping parameter sweep. Initializing GA with q={args.q}, band={args.band_idx}")
+            
+            # 1. Parse the Q-point
             try:
-                with open(sweep_results_file, 'r') as f:
-                    results = json.load(f)
-                
-                # Logic to determine best result from JSON (matching run_phonon_calculation_sweep_optimization logic)
-                best_negative_frequency = -float('inf')
-                best_result = None
-                
-                for res in results:
-                    freq = res.get("negative_frequency_at_special_point")
-                    # Note: We want the "most negative" frequency that is greater than negative infinity.
-                    # The original code tracks best_negative_frequency initialized to -inf and updates if current > best.
-                    if freq is not None and freq > best_negative_frequency:
-                        best_negative_frequency = freq
-                        best_result = res
-                
-                if best_result:
-                    print(f"Loaded best result from previous sweep: {best_negative_frequency:.4f} {args.units}")
-                    best_settings = {
-                        "supercell_dims": best_result.get("supercell_dims"), 
-                        "delta": best_result.get("delta"), 
-                        "fmax": best_result.get("fmax")
-                    }
-                    
-                    # We need the relaxed atoms from the sweep. They live in the specific N_D_F folder.
-                    # Reconstruct folder name:
-                    sc_dims = best_result.get("supercell_dims")
-                    if isinstance(sc_dims, list): sc_dims = tuple(sc_dims)
-                    sc_str = f"{sc_dims[0]}x{sc_dims[1]}x{sc_dims[2]}"
-                    sweep_folder = os.path.join(output_dir, f"N{sc_str}_D{best_result['delta']}_F{best_result['fmax']}")
-                    
-                    # Find the relaxed cif in that folder
-                    sweep_cifs = [f for f in os.listdir(sweep_folder) if "_relaxed" in f and f.endswith(".cif")]
-                    if sweep_cifs:
-                        best_relaxed_atoms_from_sweep = read(os.path.join(sweep_folder, sweep_cifs[0]))
-                        print(f"Loaded relaxed atoms from sweep folder: {sweep_cifs[0]}")
-                        
-                        # Note: best_softest_modes_info is harder to reconstruct purely from JSON without
-                        # re-parsing everything, but if a checkpoint exists, Step 4 will prioritize that anyway.
-                        # We set it to empty list as a placeholder; CheckpointManager in run_automatic... handles the rest.
-                        # This list must be non-empty to pass the check in run_automatic_soft_mode_optimization.
-                        # The real modes will be loaded from the checkpoint manager later.
-                        best_softest_modes_info = [{'label': 'RESUME_PLACEHOLDER', 'frequency': -1.0, 'raw_displacements': [], 'coordinate': [0,0,0], 'band_index': 0}]
-                        skip_sweep = True
-                        
-                    else:
-                        print("Could not find relaxed structure in sweep folder. Re-running sweep.")
-            except Exception as e:
-                print(f"Error loading sweep results: {e}. Re-running sweep.")
+                q_point_start = [float(x.strip()) for x in args.q.split(',')]
+            except:
+                sys.exit("Error parsing --q. Use format '0.25,0,0'")
 
-        if not skip_sweep:
-            print("\n--- Step 3: Running Phonon Calculation Sweep Optimization ---")
-            best_negative_frequency, best_settings, best_softest_modes_info, best_relaxed_atoms_from_sweep = run_phonon_calculation_sweep_optimization(
-                args,
-                output_dir,
-                current_atoms.copy(), # Pass the relaxed initial atoms
-                calculator,
-                cif_filename_base,
-                args.screen_supercell_ns,
-                args.screen_deltas,
-                args.screen_fmax_values,
-                args.negative_phonon_threshold_thz,
-                args.phonon_path_npoints,
-                args.phonon_dos_grid,
-                args.traj_kT,
-                args.num_modes_to_return,
+            # 2. Run a single phonon analysis to get eigenvectors for the specific mode
+            # We force num_modes_to_return=0 so it relies on the manual mode injection from phonon_utils.py
+            best_softest_modes_info, _, _, _ = run_single_phonon_analysis(
+                current_atoms.copy(), calculator, args.engine, args.units,
+                args.supercell_dims, args.delta, args.fmax, output_dir,
+                prefix=f"{cif_filename_base}_manual_start",
+                phonon_path_npoints=args.phonon_path_npoints,
+                phonon_dos_grid=args.phonon_dos_grid,
+                traj_kT=args.traj_kT,
+                # Pass the target mode specific arguments
+                q_point_for_specific_mode=q_point_start,
+                band_idx_for_specific_mode=args.band_idx,
+                num_modes_to_return=0, 
+                save_yaml=args.save_yaml
             )
+
+            # 3. Set required variables for the GA step
+            if best_softest_modes_info:
+                best_negative_frequency = best_softest_modes_info[0]['frequency']
+            else:
+                print("Error: Targeted mode analysis failed to return mode information.")
+                sys.exit(1)
+
+            best_settings = {
+                "supercell_dims": args.supercell_dims, 
+                "delta": args.delta, 
+                "fmax": args.fmax
+            }
+            best_relaxed_atoms_from_sweep = current_atoms.copy()
+
+        else:
+            # --- EXISTING SWEEP LOGIC (Indented into else block) ---
+            # If resuming, check if sweep results already exist
+            sweep_results_file = os.path.join(output_dir, "auto_results.json")
+            skip_sweep = False
+            
+            # Initialize variables needed for step 4
+            best_negative_frequency = 0
+            best_settings = {}
+            best_softest_modes_info = []
+            best_relaxed_atoms_from_sweep = None
+
+            if args.resume_dir and os.path.exists(sweep_results_file):
+                print("\n--- Step 3: Resuming - Skipping Parameter Sweep ---")
+                print(f"Found existing sweep results: {sweep_results_file}")
+                try:
+                    with open(sweep_results_file, 'r') as f:
+                        results = json.load(f)
+                    
+                    best_negative_frequency = -float('inf')
+                    best_result = None
+                    
+                    for res in results:
+                        freq = res.get("negative_frequency_at_special_point")
+                        if freq is not None and freq > best_negative_frequency:
+                            best_negative_frequency = freq
+                            best_result = res
+                    
+                    if best_result:
+                        print(f"Loaded best result from previous sweep: {best_negative_frequency:.4f} {args.units}")
+                        best_settings = {
+                            "supercell_dims": best_result.get("supercell_dims"), 
+                            "delta": best_result.get("delta"), 
+                            "fmax": best_result.get("fmax")
+                        }
+                        
+                        sc_dims = best_result.get("supercell_dims")
+                        if isinstance(sc_dims, list): sc_dims = tuple(sc_dims)
+                        sc_str = f"{sc_dims[0]}x{sc_dims[1]}x{sc_dims[2]}"
+                        sweep_folder = os.path.join(output_dir, f"N{sc_str}_D{best_result['delta']}_F{best_result['fmax']}")
+                        
+                        sweep_cifs = [f for f in os.listdir(sweep_folder) if "_relaxed" in f and f.endswith(".cif")]
+                        if sweep_cifs:
+                            best_relaxed_atoms_from_sweep = read(os.path.join(sweep_folder, sweep_cifs[0]))
+                            print(f"Loaded relaxed atoms from sweep folder: {sweep_cifs[0]}")
+                            best_softest_modes_info = [{'label': 'RESUME_PLACEHOLDER', 'frequency': -1.0, 'raw_displacements': [], 'coordinate': [0,0,0], 'band_index': 0}]
+                            skip_sweep = True
+                        else:
+                            print("Could not find relaxed structure in sweep folder. Re-running sweep.")
+                except Exception as e:
+                    print(f"Error loading sweep results: {e}. Re-running sweep.")
+
+            if not skip_sweep:
+                print("\n--- Step 3: Running Phonon Calculation Sweep Optimization ---")
+                best_negative_frequency, best_settings, best_softest_modes_info, best_relaxed_atoms_from_sweep = run_phonon_calculation_sweep_optimization(
+                    args, output_dir, current_atoms.copy(), calculator, cif_filename_base,
+                    args.screen_supercell_ns, args.screen_deltas, args.screen_fmax_values,
+                    args.negative_phonon_threshold_thz, args.phonon_path_npoints,
+                    args.phonon_dos_grid, args.traj_kT, args.num_modes_to_return,
+                )
         
+        # --- Common Path: Run GA/Traditional Optimization ---
         print(f"Method for soft mode optimization: {args.method}")
 
         print(f"\n--- Step 4: Running Automatic Soft Mode Optimization with method: {args.method} ---")
         run_automatic_soft_mode_optimization(
-            args,
-            output_dir,
-            best_negative_frequency,
-            best_settings,
-            best_softest_modes_info,
-            best_relaxed_atoms_from_sweep,
-            args.negative_phonon_threshold_thz, # Pass threshold again for clarity
-            args.soft_mode_max_iterations,
-            args.soft_mode_displacement_scales,
-            args.mode2_ratio_scales,
-            args.soft_mode_num_top_structures_to_analyze,
-            args.phonon_path_npoints,
-            args.phonon_dos_grid,
-            args.traj_kT,
-            args.cell_scale_factors,
-            args.num_modes_to_return,
-            args.ga_population_size,
-            args.ga_mutation_rate,
-            args.ga_generations,
-            args.num_new_points_per_iteration,
-            args.ga_disp_scale_bounds,
-            args.ga_ratio_bounds,
-            args.ga_cell_scale_bounds,
-            args.ga_cell_angle_bounds
+            args, output_dir, best_negative_frequency, best_settings, 
+            best_softest_modes_info, best_relaxed_atoms_from_sweep,
+            args.negative_phonon_threshold_thz, args.soft_mode_max_iterations,
+            args.soft_mode_displacement_scales, args.mode2_ratio_scales,
+            args.soft_mode_num_top_structures_to_analyze, args.phonon_path_npoints,
+            args.phonon_dos_grid, args.traj_kT, args.cell_scale_factors,
+            args.num_modes_to_return, args.ga_population_size, args.ga_mutation_rate,
+            args.ga_generations, args.num_new_points_per_iteration,
+            args.ga_disp_scale_bounds, args.ga_ratio_bounds, 
+            args.ga_cell_scale_bounds, args.ga_cell_angle_bounds
         )
     elif is_optimization_method:
         # Run optimization method directly without parameter sweep
