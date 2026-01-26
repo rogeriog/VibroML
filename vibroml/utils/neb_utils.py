@@ -372,6 +372,7 @@ def calculate_neb_forces(images: List[Atoms], calculator, spring_constant: float
         try:
             energy = image.get_potential_energy()
             true_force = image.get_forces()
+            
             energies.append(energy)
             true_forces_list.append(true_force.flatten())
             print(f"  Image {i}: Energy = {energy:.6f} eV")

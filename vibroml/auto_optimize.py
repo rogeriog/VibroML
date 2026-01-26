@@ -11,7 +11,7 @@ from .utils.md_utils import (prepare_md_supercell, setup_nvt_ensemble, setup_npt
                             temperature_ramp_callback, monitor_equilibration_convergence,
                             analyze_trajectory_stability, analyze_energy_trajectory,
                             determine_stability, save_trajectory_analysis_plots)
-from .checkpointing import CheckpointManager, should_skip_sample
+from .checkpointing import CheckpointManager, should_skip_sample, should_skip_final_analysis
 
 from .utils.genetic_algorithm import GeneticAlgorithm
 
@@ -88,6 +88,131 @@ def _save_final_structure(result, output_dir, index, structure_type, original_pr
         print(f"    Error saving files for {structure_type} structure {index}: {e}")
         import traceback
         traceback.print_exc()
+
+
+def _write_relative_energies_table(f, unique_structures):
+    """
+    Writes a table of relative energies for unique structures to an open file handle.
+    Includes Space Group symbols and Cell Parameters for easy polymorph identification.
+    
+    Args:
+        f: Open file handle (writable)
+        unique_structures: List of result dictionaries
+    """
+    if not unique_structures:
+        return
+
+    # Sort by energy
+    sorted_structs = sorted(unique_structures, key=lambda x: x['energy_per_atom'])
+    min_energy = sorted_structs[0]['energy_per_atom']
+
+    f.write(f"\n{'='*150}\n")
+    f.write(f"RELATIVE ENERGIES OF UNIQUE POLYMORPHS (Reference: Lowest Energy Structure)\n")
+    f.write(f"{'='*150}\n")
+    
+    header = f"{'Rank':<4} {'Energy (eV/atom)':<18} {'Rel. E (meV/atom)':<20} {'Space Group':<12} {'Cell Params (a, b, c, α, β, γ)':<55} {'Method Params'}\n"
+    f.write(header)
+    f.write("-" * 150 + "\n")
+
+    for i, result in enumerate(sorted_structs):
+        e_per_atom = result['energy_per_atom']
+        rel_e_mev = (e_per_atom - min_energy) * 1000
+        
+        # Get symmetry info
+        sg = result.get('international_symbol', 'N/A')
+        
+        # Get Cell Params: [a, b, c, alpha, beta, gamma]
+        cp = result.get('cell_params')
+        if cp is None and 'relaxed_atoms' in result:
+             try:
+                 cp = result['relaxed_atoms'].get_cell().cellpar()
+             except:
+                 cp = [0.0]*6
+        elif cp is None:
+            cp = [0.0]*6
+            
+        cp_str = f"{cp[0]:.2f} {cp[1]:.2f} {cp[2]:.2f} {cp[3]:.1f} {cp[4]:.1f} {cp[5]:.1f}"
+
+        # Format optimization params for context
+        raw_params = result.get('params', 'N/A')
+        param_str = "N/A"
+        
+        if isinstance(raw_params, (tuple, list)):
+             if len(raw_params) >= 2:
+                 # Basic display for (disp, ratio, ...)
+                 param_str = f"D:{raw_params[0]:.2f}, R:{raw_params[1]:.2f}"
+        elif isinstance(raw_params, dict):
+             # For random search
+             disp = raw_params.get('displacement_bounds', 'N/A')
+             param_str = f"Disp:{disp}"
+        else:
+             param_str = str(raw_params)[:30]
+
+        f.write(f"{i+1:<4} {e_per_atom:<18.6f} {rel_e_mev:<20.2f} {sg:<12} {cp_str:<55} {param_str}\n")
+        
+    f.write(f"{'='*150}\n\n")
+
+def _generate_optimization_summary(output_dir, all_results, unique_structures, method_name):
+    """Generates the first summary showing all calculated energies and unique polymorphs."""
+    summary_path = os.path.join(output_dir, f"energies_summary_{method_name}.txt")
+    with open(summary_path, 'w') as f:
+        f.write(f"--- {method_name.upper()} ENERGY OPTIMIZATION SUMMARY ---\n")
+        f.write(f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Total successful relaxations: {len(all_results)}\n")
+        f.write(f"Unique structures found: {len(unique_structures)}\n\n")
+        
+        _write_relative_energies_table(f, unique_structures)
+        
+    print(f"✅ Optimization energy summary generated at: {summary_path}")
+    
+def _generate_final_phonon_summary(output_dir, metadata):
+    """Generates the second summary specifically for phonon stability and band details."""
+    summary_path = os.path.join(output_dir, "final_phonon_analysis_report.txt")
+    with open(summary_path, 'w') as f:
+        f.write("="*100 + "\n")
+        f.write("FINAL PHONON STABILITY & BAND STRUCTURE ANALYSIS\n")
+        f.write("="*100 + "\n\n")
+        
+        header = f"{'Rank':<5} {'Energy':<12} {'SpaceGroup':<12} {'Min Freq':<12} {'Soft Modes':<10} {'Softest Mode Position'}\n"
+        f.write(header)
+        f.write("-" * 100 + "\n")
+        
+        for entry in metadata:
+            # Determine softest mode position
+            if entry['soft_modes']:
+                sm = entry['soft_modes'][0]
+                pos_str = f"{sm['label']} @ {sm['coordinate']}"
+                num_soft = len(entry['soft_modes'])
+            else:
+                pos_str = "Stable (None)"
+                num_soft = 0
+                
+            f.write(f"{entry['index']:<5} {entry['energy']:<12.6f} {entry['space_group']:<12} "
+                    f"{entry['min_freq']:<12.4f} {num_soft:<10} {pos_str}\n")
+        
+        f.write("\n" + "="*100 + "\n")
+        f.write("DETAILED FREQUENCY DATA PER TOP STRUCTURE\n")
+        f.write("="*100 + "\n")
+        for entry in metadata:
+            f.write(f"\nStructure #{entry['index']} (E: {entry['energy']:.6f}):\n")
+            if not entry['soft_modes']:
+                f.write("  -> No soft phonons detected. Structure is dynamically stable.\n")
+            else:
+                for m_idx, mode in enumerate(entry['soft_modes'][:5]): # Top 5 soft modes
+                    f.write(f"  Mode {m_idx+1}: Freq: {mode['frequency']:.4f} | Band: {mode['band_index']} | Point: {mode['label']}\n")
+
+    print(f"✅ Final phonon property summary generated at: {summary_path}")
+
+def get_constrained_supercell_variants(iteration_idx):
+    """Returns supercell list based on iteration for constrained growth."""
+    stages = [
+        [(1, 1, 1)],            # Iter 1
+        [(1, 1, 1), (2, 1, 1)], # Iter 2
+        [(1, 1, 1), (1, 2, 1)], # Iter 3
+        [(1, 1, 1), (1, 1, 2)], # Iter 4
+    ]
+    # Repeat stages 1-4 cyclically
+    return stages[(iteration_idx - 1) % 4]
 
 # Assuming these are defined elsewhere or will be imported into this file
 # from your_module import load_structure, initialize_calculator, relax_structure, run_single_phonon_analysis, run_ga_soft_mode_optimization, run_traditional_soft_mode_optimization
@@ -170,7 +295,8 @@ def run_phonon_calculation_sweep_optimization(args, output_dir, initial_atoms, c
             traj_kT=default_traj_kT,
             num_modes_to_return=num_modes_to_return,
             negative_phonon_threshold=negative_phonon_threshold_thz,
-            save_yaml=args.save_yaml
+            save_yaml=args.save_yaml,
+            compute_pdos=args.compute_pdos
         )
 
         if neg_freq_at_special_point is not None:
@@ -450,7 +576,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             phonon_path_npoints=phonon_path_npoints, phonon_dos_grid=phonon_dos_grid,
             traj_kT=default_traj_kT, num_modes_to_return=num_modes_to_return,
             negative_phonon_threshold=negative_phonon_threshold_thz,
-            save_yaml=args.save_yaml
+            save_yaml=args.save_yaml,
+            compute_pdos=args.compute_pdos
         )
         
         if recovered_modes:
@@ -539,7 +666,11 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
     
     for main_iteration_idx in range(start_iteration, max_iterations + 1):
         print(f"\n### Starting Main Iteration {main_iteration_idx} ({ga_generations} GA generations + phonon check) ###")
-
+        if args.constrained_supercell_growth:
+            current_variants = get_constrained_supercell_variants(main_iteration_idx)
+            # Update the GA object or local variable
+            ga.supercell_variants = current_variants
+            print(f"  Constrained growth enabled. Allowed supercells: {current_variants}")
         # Run GA generations for this main iteration
         # Determine starting generation based on checkpoint
         start_generation = 1
@@ -750,6 +881,11 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 lowest_energy_sample = find_lowest_energy_structures(sample_relaxation_results, num_to_select=1)
                 if lowest_energy_sample:
                     best_result_for_sample = lowest_energy_sample[0]
+                    
+                    relaxed_atoms_obj = best_result_for_sample['relaxed_atoms']
+                    current_cell_pars = relaxed_atoms_obj.get_cell().cellpar()
+                    if isinstance(current_cell_pars, np.ndarray):
+                        current_cell_pars = current_cell_pars.tolist()
 
                     E_relax = best_result_for_sample['energy_per_atom']
                     if E_ref is not None and E_relax < (E_ref + decomposition_threshold): # Note: decomposition_threshold is negative
@@ -764,6 +900,7 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                             'num_atoms': best_result_for_sample.get('num_atoms', 'N/A'),
                             'international_symbol': best_result_for_sample.get('international_symbol', 'N/A'),
                             'crystal_system': best_result_for_sample.get('crystal_system', 'N/A'),
+                            'cell_params': current_cell_pars,
                             'main_iteration': main_iteration_idx,  
                             'ga_generation': ga_generation,  
                             'sample': sample_index
@@ -868,7 +1005,7 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                     f.write(f"*** WARNING: High decomposition rate may limit GA effectiveness ***\n")
                 f.write(f"\n")
 
-                f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'Main Iter':<10} {'GA Gen':<8} {'Sample':<8} {'GA Params':<65}\n")
+                f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25}{'Cell Parameters (a, b, c, α, β, γ)':<60} {'Main Iter':<10} {'GA Gen':<8} {'Sample':<8} {'GA Params':<65}\n")
                 f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*10:<10} {'-'*8:<8} {'-'*8:<8} {'-'*65:<65}\n")
 
                 # Sort valid_iteration_results by energy_per_atom for this summary
@@ -944,11 +1081,13 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 args.supercell_dims, args.delta, args.fmax, check_dir, # FIX: Use the parsed dimensions
                 prefix=f"guidance_check_main_iter_{main_iteration_idx}",
                 phonon_path_npoints=phonon_path_npoints,
-                phonon_dos_grid=phonon_dos_grid,
+                phonon_dos_grid=(12,12,12),
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
-                save_yaml=args.save_yaml
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos
+
             )
             # Update the guiding atoms and soft mode list for the next loop
             current_primitive_atoms = primitive_atoms_for_next_iter.copy()
@@ -1056,11 +1195,13 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
     final_top_structures = unique_structures[:num_top_structures_to_analyze]
     unique_remaining_structures = unique_structures[num_top_structures_to_analyze:]
     print(f"\nFound {len(unique_structures)} structures with unique energies.")  
+    
     print(f"Selected the top {len(final_top_structures)} structures and {len(unique_remaining_structures)} additional unique structures for final analysis:")
 
     final_structure_dir = os.path.join(base_output_dir, f"final_structures")
     os.makedirs(final_structure_dir, exist_ok=True)
-
+    _generate_optimization_summary(base_output_dir, all_iterations_results, unique_structures, "GA")
+    final_phonon_metadata = []
     # Process top structures
     for i, result in enumerate(final_top_structures):
         _save_final_structure(result, final_structure_dir, i+1, "top", original_prefix)
@@ -1071,7 +1212,15 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
 
 
     # Run phonon analysis on top structures  
-    for i, result in enumerate(final_top_structures):  
+    for i, result in enumerate(final_top_structures): 
+        struct_index = i + 1
+        
+        # --- CHECKPOINT SKIP LOGIC ---
+        if resume_from_checkpoint and should_skip_final_analysis(checkpoint_state, 'top', struct_index):
+            print(f"  ⏭ Skipping final analysis for top structure #{struct_index} (already done)")
+            continue
+        # -----------------------------
+
         top_structure_relaxed_supercell = result['relaxed_atoms']  
         energy_per_atom = result['energy_per_atom']  
         energy_str = f"{abs(energy_per_atom):.4f}".replace('.', 'p')  
@@ -1085,7 +1234,7 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
         try:  
             pmg_structure = AseAtomsAdaptor.get_structure(top_structure_relaxed_supercell)  
             primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(SpacegroupAnalyzer(pmg_structure).get_primitive_standard_structure())  
-            _, _, _, _ = run_single_phonon_analysis(
+            soft_modes, bsmin, time_calc, tracked_data = run_single_phonon_analysis(
                 primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units,
                 args.supercell_dims, args.delta, args.fmax, final_phonon_dir,
                 prefix=f"final_{original_prefix}_top_{i+1}_energy_{energy_str}",
@@ -1095,8 +1244,26 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structure_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
-                save_yaml=args.save_yaml
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos
             )
+            # Store detailed data for the second summary
+            final_phonon_metadata.append({
+                'index': i + 1,
+                'energy': result['energy_per_atom'],
+                'space_group': result.get('international_symbol', 'N/A'),
+                'min_freq': bsmin,
+                'soft_modes': soft_modes,
+                'path': final_phonon_dir
+            })
+            # --- SAVE CHECKPOINT ---
+            checkpoint_manager.save_checkpoint_final_analysis(
+                'top', struct_index, all_iterations_results, 
+                {'main_iteration': main_iteration_idx, 'ga_generation': ga_generation},
+                current_primitive_atoms
+            )
+            
+            # -----------------------
         except Exception as e:  
             print(f"  Error during final phonon analysis for top structure {i+1}: {e}")  
             import traceback  
@@ -1104,8 +1271,17 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
     
     # Run phonon analysis on unique structures (only if there are any)  
     if unique_remaining_structures:  
+
         print(f"\n--- Running Final Phonon Analysis on {len(unique_remaining_structures)} Additional Unique Structures ---")  
         for i, result in enumerate(unique_remaining_structures):  
+            struct_index = i + 1
+            
+            # --- CHECKPOINT SKIP LOGIC ---
+            if resume_from_checkpoint and should_skip_final_analysis(checkpoint_state, 'unique', struct_index):
+                print(f"  ⏭ Skipping final analysis for unique structure #{struct_index} (already done)")
+                continue
+            # -----------------------------
+            
             unique_structure_relaxed_supercell = result['relaxed_atoms']  
             energy_per_atom = result['energy_per_atom']  
             energy_str = f"{abs(energy_per_atom):.4f}".replace('.', 'p')  
@@ -1119,7 +1295,7 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             try:  
                 pmg_structure = AseAtomsAdaptor.get_structure(unique_structure_relaxed_supercell)  
                 primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(SpacegroupAnalyzer(pmg_structure).get_primitive_standard_structure())  
-                _, _, _, _ = run_single_phonon_analysis(
+                soft_modes, bsmin, time_calc, tracked_data = run_single_phonon_analysis(
                     primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units,
                     args.supercell_dims, args.delta, args.fmax, final_phonon_dir,
                     prefix=f"final_{original_prefix}_unique_{i+1}_energy_{energy_str}",
@@ -1129,16 +1305,33 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                     num_modes_to_return=num_modes_to_return,
                     final_structures_dir=final_structure_dir,
                     negative_phonon_threshold=negative_phonon_threshold_thz,
-                    save_yaml=args.save_yaml
+                    save_yaml=args.save_yaml,
+                    compute_pdos=args.compute_pdos
                 )
+
+                final_phonon_metadata.append({
+                    'index': i + 1,
+                    'energy': result['energy_per_atom'],
+                    'space_group': result.get('international_symbol', 'N/A'),
+                    'min_freq': bsmin,
+                    'soft_modes': soft_modes,
+                    'path': final_phonon_dir
+                })
+                # --- SAVE CHECKPOINT ---
+                checkpoint_manager.save_checkpoint_final_analysis(
+                    'unique', struct_index, all_iterations_results, 
+                    {'main_iteration': main_iteration_idx, 'ga_generation': ga_generation},
+                    current_primitive_atoms
+                )
+                # -----------------------
             except Exception as e:  
                 print(f"  Error during final phonon analysis for unique structure {i+1}: {e}")  
                 import traceback  
                 traceback.print_exc()  
     else:  
         print(f"\nNo additional unique structures found beyond the top {len(final_top_structures)} structures.")
-
     print("\n--- Soft Mode Iterative Optimization Complete ---")
+    _generate_final_phonon_summary(base_output_dir, final_phonon_metadata)
 
     # Create comprehensive GA summary similar to traditional_all mode
     print("\n--- Creating Comprehensive GA Summary ---")
@@ -1193,8 +1386,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
         # All Successful Structures Table
         f.write("All Successful Structures (sorted by energy):\n")
         f.write("=" * 280 + "\n")
-        f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy (eV/atom)':<20} {'Iter':<5} {'Gen':<5} {'Sample':<8} {'GA Parameters':<120} {'Soft Mode Details':<80}\n")
-        f.write("=" * 280 + "\n")
+        f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy (eV/atom)':<25} {'Cell Params (a,b,c,α,β,γ)':<55} {'Iter':<5} {'Gen':<5} {'Sample':<8} {'GA Params':<120} {'Soft Mode Details':<80}\n")
+        f.write("=" * 340 + "\n") # Increase total length
 
         for result in sorted_overall_results:
             num_atoms = result.get('num_atoms', 'N/A')
@@ -1202,6 +1395,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             crystal_system = result.get('crystal_system', 'N/A')
             energy = result.get('energy_per_atom', 'FAIL')
             params = result.get('params', ('N/A', 'N/A', ('N/A',)*6, 'N/A', 'N/A'))
+            cp = result.get('cell_params', [0,0,0,0,0,0])
+            cp_str = f"{cp[0]:.2f} {cp[1]:.2f} {cp[2]:.2f} {cp[3]:.1f} {cp[4]:.1f} {cp[5]:.1f}"
 
             # Format GA parameters
             if isinstance(params, tuple) and len(params) == 5:
@@ -1216,30 +1411,9 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             soft_mode_details = "P:0.00THz@[0, 0, 0], S:0.00THz@[0, 0, 0]"
 
             energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)
-            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<20} {str(result.get('main_iteration', 'N/A')):<5} {str(result.get('ga_generation', 'N/A')):<5} {str(result.get('sample', 'N/A')):<8} {params_str:<120} {soft_mode_details:<80}\n")
+            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<20} {cp_str:<55} {str(result.get('main_iteration', 'N/A')):<5} {str(result.get('ga_generation', 'N/A')):<5} {str(result.get('sample', 'N/A')):<8} {params_str:<120} {soft_mode_details:<80}\n")
 
         f.write("=" * 280 + "\n\n")
-
-        # Unique Structures Summary
-        f.write(f"Unique Structures Summary (energy tolerance: {energy_tolerance:.1e} eV/atom):\n")
-        f.write("-" * 150 + "\n")
-        f.write(f"{'Rank':<6} {'Energy (eV/atom)':<20} {'Energy Difference (meV/atom)':<30} {'GA Parameters':<80}\n")
-        f.write("-" * 150 + "\n")
-
-        for i, unique_struct in enumerate(unique_structures):
-            energy_diff = (unique_struct['energy_per_atom'] - unique_structures[0]['energy_per_atom']) * 1000  # Convert to meV
-
-            # Format parameters for unique structure
-            params = unique_struct.get('params', ('N/A', 'N/A', ('N/A',)*6, 'N/A', 'N/A'))
-            if isinstance(params, tuple) and len(params) >= 3:
-                cell_vec = params[2]
-                params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:({cell_vec[0]:.3f}, {cell_vec[1]:.3f}, {cell_vec[2]:.3f}...)"
-            else:
-                params_str = str(params)
-
-            f.write(f"{i+1:<6} {unique_struct['energy_per_atom']:.6f}{'':>14} {energy_diff:.2f}{'':>26} {params_str:<80}\n")
-
-        f.write("-" * 150 + "\n\n")
 
         # Final Top Structures Selected for Analysis
         f.write(f"Final Top {len(final_top_structures)} Structures Selected for Analysis:\n")
@@ -1281,6 +1455,10 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             num_atoms = result.get('num_atoms', 'N/A')
             international_symbol = result.get('international_symbol', 'N/A')
             crystal_system = result.get('crystal_system', 'N/A')
+            cp = result.get('cell_params', [0,0,0,0,0,0])
+    
+            # Format cell params string
+            cp_str = f"{cp[0]:.2f}, {cp[1]:.2f}, {cp[2]:.2f}, {cp[3]:.1f}, {cp[4]:.1f}, {cp[5]:.1f}"
             energy = result.get('energy_per_atom', 'FAIL')
             params = result.get('params', ('N/A', 'N/A', ('N/A',)*6, 'N/A', 'N/A')) # Updated to 5 elements
             if isinstance(params, tuple) and len(params) == 5:
@@ -1291,7 +1469,7 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             else:
                 params_str = str(params)
             energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)
-            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {str(result.get('main_iteration', 'N/A')):<10} {str(result.get('ga_generation', 'N/A')):<8} {str(result.get('sample', 'N/A')):<8} {params_str:<80}\n")
+            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {cp_str:<60} {str(result.get('main_iteration', 'N/A')):<10} {str(result.get('ga_generation', 'N/A')):<8} {str(result.get('sample', 'N/A')):<8} {params_str:<80}\n")
 
     print(f"Simple relaxation summary saved to: {simple_summary_filepath}")
 
@@ -1372,7 +1550,9 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
     
     for iteration_idx in range(start_iteration, max_iterations + 1):
         print(f"\n### Starting Traditional Iteration {iteration_idx} ###")
-        
+        if args.constrained_supercell_growth:
+        # Override the variants for this iteration
+            supercell_variants = get_constrained_supercell_variants(iteration_idx)
         if len(softest_modes_info_list) == 0:
             print(f"No softest mode information to guide iteration {iteration_idx}. Stopping.")
             break
@@ -1456,6 +1636,10 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                     lowest_energy_sample = find_lowest_energy_structures(sample_relaxation_results, num_to_select=1)  
                     if lowest_energy_sample:  
                         best_result_for_sample = lowest_energy_sample[0]  
+                        relaxed_atoms_obj = best_result_for_sample['relaxed_atoms']
+                        current_cell_pars = relaxed_atoms_obj.get_cell().cellpar()
+                        if isinstance(current_cell_pars, np.ndarray):
+                            current_cell_pars = current_cell_pars.tolist()
                         iteration_results.append({  
                             'params': (disp_scale, ratio_mode2_to_mode1, cell_transformation_vector),  
                             'energy_per_atom': best_result_for_sample['energy_per_atom'],  
@@ -1464,6 +1648,7 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                             'num_atoms': best_result_for_sample.get('num_atoms', 'N/A'),  
                             'international_symbol': best_result_for_sample.get('international_symbol', 'N/A'),  
                             'crystal_system': best_result_for_sample.get('crystal_system', 'N/A'),  
+                            'cell_params': current_cell_pars,
                             'iteration': iteration_idx,  
                             'sample': sample_counter  
                         })  
@@ -1503,8 +1688,8 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
         with open(iteration_summary_filepath, 'w') as f:
             f.write(f"--- Relaxation Summary for Iteration {iteration_idx} (Traditional) ---\n")
             f.write(f"Analysis Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'Iter':<6} {'Sample':<8} {'Params':<50}\n")
-            f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*6:<6} {'-'*8:<8} {'-'*50:<50}\n")
+            f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy (eV/atom)':<25} {'Cell Params (a,b,c,α,β,γ)':<55} {'Iter':<6} {'Sample':<8} {'Params':<50}\n")
+            f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*55:<55} {'-'*6:<6} {'-'*8:<8} {'-'*50:<50} \n")
 
             sorted_iter_results = sorted(valid_iteration_results, key=lambda x: x['energy_per_atom'])
 
@@ -1558,11 +1743,12 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                 args.supercell_dims, args.delta, args.fmax, check_dir,
                 prefix=f"guidance_check_iter_{iteration_idx}",
                 phonon_path_npoints=phonon_path_npoints,
-                phonon_dos_grid=phonon_dos_grid,
+                phonon_dos_grid=(12,12,12),
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
-                save_yaml=args.save_yaml
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos
             )
             current_primitive_atoms = primitive_atoms_for_next_iter.copy()
             softest_modes_info_list = next_softest_modes_info_list
@@ -1593,6 +1779,7 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
         print("No structures were successfully relaxed to perform final analysis on.")
         return
 
+    # Final analysis setup
     valid_overall_results = [
         r for r in all_iterations_results
         if isinstance(r, dict) and 'energy_per_atom' in r and r['energy_per_atom'] is not None
@@ -1603,53 +1790,49 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
         return
 
     sorted_overall_best = sorted(valid_overall_results, key=lambda x: x['energy_per_atom'])
-    final_top_structures = sorted_overall_best[:num_top_structures_to_analyze]
-
-    print("\nAll valid iteration results (sorted by energy):")
-    for idx, result in enumerate(sorted_overall_best, 1):
-        original_file = os.path.basename(result.get('original_file', 'unknown'))
+    
+    # Get all unique energies
+    unique_structures = []
+    energy_tolerance = 5e-4  # 0.5 meV/atom tolerance
+    
+    for result in sorted_overall_best:
         energy = result['energy_per_atom']
-        params = result.get('params', ('N/A', 'N/A', 'N/A'))
-        cell_transform_str = ", ".join([f"{val:.3f}" for val in params[2]])
-        print(f"  {idx}. Iter {result.get('iteration', 'N/A')}, Sample {result.get('sample', 'N/A')}: {original_file} (Disp1: {params[0]:.3f}, R21: {params[1]:.3f}, Cell:({cell_transform_str})): {energy:.6f} eV/atom")
+        is_unique = True
+        for existing_result in unique_structures:
+            if abs(energy - existing_result['energy_per_atom']) < energy_tolerance:
+                is_unique = False
+                break
+        if is_unique:
+            unique_structures.append(result)
 
-
-    print(f"\nSelected the top {len(final_top_structures)} structures from all iterations for final analysis:")
-    # Get all unique energies from ALL structures with tolerance  
-    all_structures = sorted_overall_best  
-    unique_structures = []  
-    energy_tolerance = 5e-4  # 0.0005 eV/atom tolerance  
-    
-    for result in all_structures:  
-        energy = result['energy_per_atom']  
-        is_unique = True  
-        
-        # Check if this energy is unique within tolerance  
-        for existing_result in unique_structures:  
-            if abs(energy - existing_result['energy_per_atom']) < energy_tolerance:  
-                is_unique = False  
-                break  
-        
-        if is_unique:  
-            unique_structures.append(result)  
-    
-    # Now separate: first N are "top", rest are "unique"  
-    final_top_structures = unique_structures[:num_top_structures_to_analyze]  
+    final_top_structures = unique_structures[:num_top_structures_to_analyze]
     unique_remaining_structures = unique_structures[num_top_structures_to_analyze:]
+
+    # 1. GENERATE ENERGY SUMMARY IMMEDIATELY
+    _generate_optimization_summary(base_output_dir, all_iterations_results, unique_structures, "Traditional")
+
     final_structure_dir = os.path.join(base_output_dir, f"final_structures")
     os.makedirs(final_structure_dir, exist_ok=True)
-
-    # Process top structures
+    
+    # Save files
     for i, result in enumerate(final_top_structures):
         _save_final_structure(result, final_structure_dir, i+1, "top", original_prefix)
-
-    # Process unique remaining structures  
     for i, result in enumerate(unique_remaining_structures):
         _save_final_structure(result, final_structure_dir, i+1, "unique", original_prefix)
 
+    # Initialize metadata list
+    final_phonon_metadata = []
 
     # Run phonon analysis on top structures  
-    for i, result in enumerate(final_top_structures):  
+    for i, result in enumerate(final_top_structures): 
+        struct_index = i + 1
+
+        # --- CHECKPOINT SKIP LOGIC ---
+        if resume_from_checkpoint and should_skip_final_analysis(checkpoint_state, 'top', struct_index):
+            print(f"  ⏭ Skipping final analysis for top structure #{struct_index} (already done)")
+            continue
+        # ----------------------------- 
+        
         top_structure_relaxed_supercell = result['relaxed_atoms']  
         energy_per_atom = result['energy_per_atom']  
         energy_str = f"{abs(energy_per_atom):.4f}".replace('.', 'p')  
@@ -1663,7 +1846,9 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
         try:  
             pmg_structure = AseAtomsAdaptor.get_structure(top_structure_relaxed_supercell)  
             primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(SpacegroupAnalyzer(pmg_structure).get_primitive_standard_structure())  
-            _, _, _, _ = run_single_phonon_analysis(
+            
+            # CAPTURE RETURN VALUES
+            soft_modes, bsmin, time_calc, tracked_data = run_single_phonon_analysis(
                 primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units,
                 args.supercell_dims, args.delta, args.fmax, final_phonon_dir,
                 prefix=f"final_{original_prefix}_top_{i+1}_energy_{energy_str}",
@@ -1673,8 +1858,27 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structure_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
-                save_yaml=args.save_yaml
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos
             )
+
+            # COLLECT METADATA
+            final_phonon_metadata.append({
+                'index': i + 1,
+                'energy': result['energy_per_atom'],
+                'space_group': result.get('international_symbol', 'N/A'),
+                'min_freq': bsmin,
+                'soft_modes': soft_modes,
+                'path': final_phonon_dir
+            })
+
+            # --- SAVE CHECKPOINT ---
+            checkpoint_manager.save_checkpoint_final_analysis(
+                'top', struct_index, all_iterations_results, 
+                {'iteration': iteration_idx},
+                current_primitive_atoms
+            )
+            # -----------------------
         except Exception as e:  
             print(f"  Error during final phonon analysis for top structure {i+1}: {e}")  
             import traceback  
@@ -1684,6 +1888,14 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
     if unique_remaining_structures:  
         print(f"\n--- Running Final Phonon Analysis on {len(unique_remaining_structures)} Additional Unique Structures ---")  
         for i, result in enumerate(unique_remaining_structures):  
+            struct_index = i + 1
+            
+            # --- CHECKPOINT SKIP LOGIC ---
+            if resume_from_checkpoint and should_skip_final_analysis(checkpoint_state, 'unique', struct_index):
+                print(f"  ⏭ Skipping final analysis for unique structure #{struct_index} (already done)")
+                continue
+            # -----------------------------
+            
             unique_structure_relaxed_supercell = result['relaxed_atoms']  
             energy_per_atom = result['energy_per_atom']  
             energy_str = f"{abs(energy_per_atom):.4f}".replace('.', 'p')  
@@ -1697,7 +1909,9 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
             try:  
                 pmg_structure = AseAtomsAdaptor.get_structure(unique_structure_relaxed_supercell)  
                 primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(SpacegroupAnalyzer(pmg_structure).get_primitive_standard_structure())  
-                _, _, _, _ = run_single_phonon_analysis(
+                
+                # CAPTURE RETURN VALUES
+                soft_modes, bsmin, time_calc, tracked_data = run_single_phonon_analysis(
                     primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units,
                     args.supercell_dims, args.delta, args.fmax, final_phonon_dir,
                     prefix=f"final_{original_prefix}_unique_{i+1}_energy_{energy_str}",
@@ -1705,20 +1919,41 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                     phonon_dos_grid=phonon_dos_grid,
                     traj_kT=default_traj_kT,
                     num_modes_to_return=num_modes_to_return,
-                    final_structures_dir=final_structure_dir,
+                    final_structures_dir=final_structures_dir,
                     negative_phonon_threshold=negative_phonon_threshold_thz,
-                    save_yaml=args.save_yaml
+                    save_yaml=args.save_yaml,
+                    compute_pdos=args.compute_pdos
                 )
+
+                # COLLECT METADATA
+                final_phonon_metadata.append({
+                    'index': f"U{i+1}",
+                    'energy': result['energy_per_atom'],
+                    'space_group': result.get('international_symbol', 'N/A'),
+                    'min_freq': bsmin,
+                    'soft_modes': soft_modes,
+                    'path': final_phonon_dir
+                })
+
+                # --- SAVE CHECKPOINT ---
+                checkpoint_manager.save_checkpoint_final_analysis(
+                    'unique', struct_index, all_iterations_results, 
+                    {'iteration': iteration_idx},
+                    current_primitive_atoms
+                )
+                # -----------------------
             except Exception as e:  
                 print(f"  Error during final phonon analysis for unique structure {i+1}: {e}")  
                 import traceback  
                 traceback.print_exc()  
     else:  
         print(f"\nNo additional unique structures found beyond the top {len(final_top_structures)} structures.")
-
+    
+    # 2. GENERATE PHONON SUMMARY
+    _generate_final_phonon_summary(base_output_dir, final_phonon_metadata)
     print("\n--- Soft Mode Iterative Optimization Complete ---")
     overall_summary_filepath = os.path.join(base_output_dir, "overall_relaxation_summary.txt")
-
+    
     print("\n--- Creating Overall Relaxation Summary (All Iterations) ---")
     with open(overall_summary_filepath, 'w') as f:
         f.write(f"--- Overall Relaxation Summary (All Iterations) ---\n")
@@ -1736,16 +1971,16 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
             params = result.get('params', ('N/A', 'N/A', 'N/A'))
             cell_transform_str = ", ".join([f"{val:.3f}" for val in params[2]])
             params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:({cell_transform_str})" if isinstance(params, tuple) else str(params)
-
+            cp = result.get('cell_params', [0,0,0,0,0,0])
+            cp_str = f"{cp[0]:.2f} {cp[1]:.2f} {cp[2]:.2f} {cp[3]:.1f} {cp[4]:.1f} {cp[5]:.1f}"
             energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)
-            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {str(result.get('iteration', 'N/A')):<6} {str(result.get('sample', 'N/A')):<8} {params_str:<50}\n")
+
+            # Update Row writing
+            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {cp_str:<55} {str(result.get('iteration', 'N/A')):<6} {str(result.get('sample', 'N/A')):<8} {params_str:<50}\n")
     print(f"Overall relaxation summary saved to: {overall_summary_filepath}")
 
-    with open(overall_summary_filepath, 'r') as f:
-        print("\n" + f.read())
 
-
-def identify_all_soft_modes_from_phonon_analysis(softest_modes_info_list, tracked_k_points_data, negative_phonon_threshold_thz):
+def identify_all_soft_modes_from_phonon_analysis(softest_modes_info_list, tracked_k_points_data, negative_phonon_threshold_thz, max_per_point=None):
     """
     Identifies all soft modes from phonon analysis results.
 
@@ -1774,7 +2009,26 @@ def identify_all_soft_modes_from_phonon_analysis(softest_modes_info_list, tracke
     print(f"Identified {len(all_soft_modes)} soft modes below threshold {negative_phonon_threshold_thz:.4f} THz")
     for i, mode in enumerate(all_soft_modes):
         print(f"  Mode {i+1}: {mode.get('label', 'unknown')} at {mode.get('frequency', 0):.4f} THz")
+    if max_per_point is not None:
+        print(f"Limiting to {max_per_point} softest modes per high-symmetry point")
+        # Group by coordinate string to identify high-symmetry points
+        grouped_modes = {}
+        for mode in all_soft_modes:
+            q_key = str(mode.get('coordinate', [0,0,0]))
+            if q_key not in grouped_modes:
+                grouped_modes[q_key] = []
+            grouped_modes[q_key].append(mode)
+        
+        limited_modes = []
+        for q_key in grouped_modes:
+            # Sort by frequency and take the top N softest
+            modes_at_point = sorted(grouped_modes[q_key], key=lambda x: x.get('frequency', 0))
+            limited_modes.extend(modes_at_point[:max_per_point])
+        
+        all_soft_modes = limited_modes
 
+    # Sort final list
+    all_soft_modes.sort(key=lambda x: x.get('frequency', 0))
     return all_soft_modes
 
 
@@ -1823,10 +2077,9 @@ def generate_soft_mode_pairings(all_soft_modes):
 
     return pairings
 
-
 def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mode_analysis, softest_modes_info_list, max_iterations,
-                               soft_mode_displacement_scales, cell_scale_factors, mode2_ratio_scales, num_top_structures_to_analyze, negative_phonon_threshold_thz,
-                               phonon_path_npoints, phonon_dos_grid, default_traj_kT, num_modes_to_return):
+                                               soft_mode_displacement_scales, cell_scale_factors, mode2_ratio_scales, num_top_structures_to_analyze, negative_phonon_threshold_thz,
+                                               phonon_path_npoints, phonon_dos_grid, default_traj_kT, num_modes_to_return):
     """
     Runs an iterative workflow to find low-energy structures using the traditional_all method.
 
@@ -1912,16 +2165,17 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                 args.supercell_dims, args.delta, args.fmax, check_dir,
                 prefix=f"guidance_check_main_iter_{iteration_idx}",
                 phonon_path_npoints=phonon_path_npoints,
-                phonon_dos_grid=phonon_dos_grid,
+                phonon_dos_grid=(12, 12, 12),
                 traj_kT=default_traj_kT,
                 num_modes_to_return=num_modes_to_return,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
-                save_yaml=args.save_yaml
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos
             )
 
             # Identify all soft modes
             all_soft_modes = identify_all_soft_modes_from_phonon_analysis(
-                next_softest_modes_info_list, tracked_k_points_data, negative_phonon_threshold_thz
+                next_softest_modes_info_list, tracked_k_points_data, negative_phonon_threshold_thz, max_per_point=args.maximum_indexes_on_same_points
             )
 
             if len(all_soft_modes) < 2:
@@ -2130,7 +2384,12 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                                 if relaxed_structures_info:
                                     # Find the lowest energy structure
                                     lowest_energy_info = min(relaxed_structures_info, key=lambda x: x['energy_per_atom'])
+                                    relaxed_atoms_obj = lowest_energy_info['relaxed_atoms']
+                                    current_cell_pars = relaxed_atoms_obj.get_cell().cellpar()
 
+                                    if isinstance(current_cell_pars, np.ndarray):
+                                        current_cell_pars = current_cell_pars.tolist()
+                                    
                                     # Extract detailed soft mode information
                                     modes_info = config['modes_info']
                                     primary_mode = modes_info[0] if len(modes_info) > 0 else {}
@@ -2148,6 +2407,7 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                                         'num_atoms': lowest_energy_info.get('num_atoms', 'N/A'),
                                         'international_symbol': lowest_energy_info.get('international_symbol', 'N/A'),
                                         'crystal_system': lowest_energy_info.get('crystal_system', 'N/A'),
+                                        'cell_params': current_cell_pars,
                                         # Add soft mode information
                                         'primary_mode': {
                                             'label': primary_mode.get('label', 'Unknown'),
@@ -2433,6 +2693,7 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
 
     print(f"Found {len(unique_structures)} unique structures (energy tolerance: {energy_tolerance:.1e} eV/atom)")
 
+
     # Find top structures across all iterations
     sorted_results = sorted(all_iterations_results, key=lambda x: x['energy_per_atom'])
     final_top_structures = []
@@ -2478,22 +2739,43 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
         except Exception as e:
             print(f"  Error saving unique structure {i+1}: {e}")
 
+    # 1. GENERATE ENERGY SUMMARY IMMEDIATELY
+    _generate_optimization_summary(base_output_dir, all_iterations_results, unique_structures, "Traditional_All")
+
+    final_phonon_metadata = []
+
     # Create individual phonon analysis folders for top 5 structures (GA-style)
     print(f"\n--- Creating Individual Phonon Analysis Folders for Top {len(final_top_structures)} Structures ---")
     for i, (energy_per_atom, relaxed_atoms, params) in enumerate(final_top_structures):
+        struct_index = i + 1
+
+        # --- CHECKPOINT SKIP LOGIC ---
+        if resume_from_checkpoint and should_skip_final_analysis(checkpoint_state, 'top', struct_index):
+            print(f"  ⏭ Skipping final analysis for top structure #{struct_index} (already done)")
+            continue
+        # -----------------------------
         try:
             # Create energy string for folder name (similar to GA mode)
             energy_str = f"m{abs(energy_per_atom):.4f}".replace('.', 'p')
 
             final_phonon_dir = os.path.join(base_output_dir, f"final_phonon_analysis_top_{i+1}_energy_{energy_str}")
             print(f"\n--- Running Final Phonon Analysis on Top Structure #{i+1} (Energy: {energy_per_atom:.6f} eV/atom) ---")
+            
+            # Save structure files using the existing helper function
+            result_dict = {
+                'relaxed_atoms': relaxed_atoms,
+                'energy_per_atom': energy_per_atom,
+                'iteration': 'final',
+                'sample': i+1
+            }
+            _save_final_structure(result_dict, final_structures_dir, i+1, "final", original_prefix)
 
             # Convert to primitive structure for phonon analysis (like GA mode)
             pmg_structure = AseAtomsAdaptor.get_structure(relaxed_atoms)
             primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(SpacegroupAnalyzer(pmg_structure).get_primitive_standard_structure())
 
-            # Run phonon analysis (same as GA mode)
-            _, _, _, _ = run_single_phonon_analysis(
+            # Run phonon analysis (same as GA mode) - CAPTURE RETURNS
+            soft_modes, bsmin, time_calc, tracked_data = run_single_phonon_analysis(
                 primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units,
                 args.supercell_dims, args.delta, args.fmax, final_phonon_dir,
                 prefix=f"final_{original_prefix}_top_{i+1}_energy_{energy_str}",
@@ -2503,10 +2785,32 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structures_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
-                save_yaml=args.save_yaml
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos
             )
             print(f"  Completed phonon analysis for top structure {i+1}")
 
+            # COLLECT METADATA
+            # Note: space group not in the tuple, finding it via energy match or just re-calculating
+            # A quick re-calc for metadata
+            sg_symbol = SpacegroupAnalyzer(pmg_structure).get_space_group_symbol()
+            
+            final_phonon_metadata.append({
+                'index': i + 1,
+                'energy': energy_per_atom,
+                'space_group': sg_symbol,
+                'min_freq': bsmin,
+                'soft_modes': soft_modes,
+                'path': final_phonon_dir
+            })
+
+            # --- SAVE CHECKPOINT ---
+            checkpoint_manager.save_checkpoint_final_analysis(
+                'top', struct_index, all_iterations_results, 
+                {'iteration': iteration_idx},
+                current_primitive_atoms
+            )
+            # -----------------------
         except Exception as e:
             print(f"  Error creating phonon analysis for top structure {i+1}: {e}")
             import traceback
@@ -2516,22 +2820,32 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
     if additional_unique_structures:
         print(f"\n--- Creating Individual Phonon Analysis Folders for {len(additional_unique_structures)} Additional Unique Structures ---")
         for i, result in enumerate(additional_unique_structures):
+            struct_index = i + 1
+
+            # --- CHECKPOINT SKIP LOGIC ---
+            if resume_from_checkpoint and should_skip_final_analysis(checkpoint_state, 'unique', struct_index):
+                print(f"  ⏭ Skipping final analysis for unique structure #{struct_index} (already done)")
+                continue
+            # -----------------------------
             try:
                 energy_per_atom = result['energy_per_atom']
                 relaxed_atoms = result['relaxed_atoms']
 
-                # Create energy string for folder name (similar to GA mode)
+                # Create energy string for folder name
                 energy_str = f"m{abs(energy_per_atom):.4f}".replace('.', 'p')
 
                 final_phonon_dir = os.path.join(base_output_dir, f"final_phonon_analysis_unique_{i+1}_energy_{energy_str}")
                 print(f"\n--- Running Final Phonon Analysis on Unique Structure #{i+1} (Energy: {energy_per_atom:.6f} eV/atom) ---")
+                
+                # Save structure
+                _save_final_structure(result, final_structures_dir, i+1, "unique", original_prefix)
 
-                # Convert to primitive structure for phonon analysis (like GA mode)
+                # Convert to primitive structure for phonon analysis
                 pmg_structure = AseAtomsAdaptor.get_structure(relaxed_atoms)
                 primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(SpacegroupAnalyzer(pmg_structure).get_primitive_standard_structure())
 
-                # Run phonon analysis (same as GA mode)
-                _, _, _, _ = run_single_phonon_analysis(
+                # Run phonon analysis - CAPTURE RETURNS
+                soft_modes, bsmin, time_calc, tracked_data = run_single_phonon_analysis(
                     primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units,
                     args.supercell_dims, args.delta, args.fmax, final_phonon_dir,
                     prefix=f"final_{original_prefix}_unique_{i+1}_energy_{energy_str}",
@@ -2541,49 +2855,35 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                     num_modes_to_return=num_modes_to_return,
                     final_structures_dir=final_structures_dir,
                     negative_phonon_threshold=negative_phonon_threshold_thz,
-                    save_yaml=args.save_yaml
+                    save_yaml=args.save_yaml,
+                    compute_pdos=args.compute_pdos
                 )
                 print(f"  Completed phonon analysis for unique structure {i+1}")
+                
+                # COLLECT METADATA (Unique)
+                final_phonon_metadata.append({
+                    'index': f"U{i+1}",
+                    'energy': energy_per_atom,
+                    'space_group': result.get('international_symbol', 'N/A'),
+                    'min_freq': bsmin,
+                    'soft_modes': soft_modes,
+                    'path': final_phonon_dir
+                })
 
+                # --- SAVE CHECKPOINT ---
+                checkpoint_manager.save_checkpoint_final_analysis(
+                    'unique', struct_index, all_iterations_results, 
+                    {'iteration': iteration_idx},
+                    current_primitive_atoms
+                )
+                # -----------------------
             except Exception as e:
                 print(f"  Error creating phonon analysis for unique structure {i+1}: {e}")
                 import traceback
                 traceback.print_exc()
 
-    for i, (energy, atoms, params) in enumerate(final_top_structures):
-        try:
-            # Save structure files using the existing helper function
-            result_dict = {
-                'relaxed_atoms': atoms,
-                'energy_per_atom': energy,
-                'iteration': 'final',
-                'sample': i+1
-            }
-            _save_final_structure(result_dict, final_structures_dir, i+1, "final", original_prefix)
-
-            # Run final phonon analysis
-            final_structure_dir = os.path.join(final_structures_dir, f"final_structure_{i+1}")
-            os.makedirs(final_structure_dir, exist_ok=True)
-
-            print(f"  Running final phonon analysis for structure {i+1} (Energy: {energy:.6f} eV/atom)")
-
-            run_single_phonon_analysis(
-                atoms.copy(), calculator, args.engine, args.units,
-                args.supercell_dims, args.delta, args.fmax, final_structure_dir,
-                prefix=f"final_structure_{i+1}",
-                phonon_path_npoints=phonon_path_npoints,
-                phonon_dos_grid=phonon_dos_grid,
-                traj_kT=default_traj_kT,
-                num_modes_to_return=num_modes_to_return,
-                final_structures_dir=final_structure_dir,
-                negative_phonon_threshold=negative_phonon_threshold_thz,
-                save_yaml=args.save_yaml
-            )
-
-        except Exception as e:
-            print(f"  Error during final analysis for structure {i+1}: {e}")
-            import traceback
-            traceback.print_exc()
+    # 2. GENERATE PHONON SUMMARY AFTER LOOP
+    _generate_final_phonon_summary(base_output_dir, final_phonon_metadata)
 
     # Create overall summary
     print("\n--- Creating Overall Summary ---")
@@ -2624,9 +2924,9 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
 
         # All Successful Structures Table (with structural information and detailed soft mode info)
         f.write("All Successful Structures (sorted by energy):\n")
-        f.write("=" * 320 + "\n")
-        f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy (eV/atom)':<25} {'Iter':<5} {'Sample':<8} {'Primary Mode':<25} {'Secondary Mode':<25} {'Configuration Description':<80} {'Parameters':<50} {'Soft Mode Details':<80}\n")
-        f.write("=" * 320 + "\n")
+        f.write("=" * 400 + "\n")
+        f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy (eV/atom)':<25} {'Cell Params (a,b,c,α,β,γ)':<55} {'Iter':<5} {'Sample':<8} {'Primary Mode':<25} {'Secondary Mode':<25} {'Configuration Description':<80} {'Parameters':<50} {'Soft Mode Details':<80}\n")
+        f.write("=" * 400 + "\n")
 
         for i, result in enumerate(sorted_results):
             num_atoms = result.get('num_atoms', 'N/A')
@@ -2637,7 +2937,8 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
             sample_id = result.get('sample_id', 'N/A')
             config_desc = result.get('configuration', 'Unknown')  # Full description, no truncation
             params = result.get('params', ('N/A', 'N/A', ('N/A',)))
-
+            cp = result.get('cell_params', [0,0,0,0,0,0])
+            cp_str = f"{cp[0]:.2f} {cp[1]:.2f} {cp[2]:.2f} {cp[3]:.1f} {cp[4]:.1f} {cp[5]:.1f}"
             # Extract soft mode information
             primary_mode = result.get('primary_mode', {})
             secondary_mode = result.get('secondary_mode', {})
@@ -2661,29 +2962,8 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
             soft_mode_details = f"P:{primary_freq:.2f}THz@{primary_k}, S:{secondary_freq:.2f}THz@{secondary_k}"
 
             energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)
-            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {str(iteration):<5} {str(sample_id):<8} {primary_str:<25} {secondary_str:<25} {config_desc:<80} {params_str:<50} {soft_mode_details:<80}\n")
-
+            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {cp_str:<55} {str(iteration):<5} {str(sample_id):<8} {primary_str:<25} {secondary_str:<25} {config_desc:<80} {params_str:<50} {soft_mode_details:<80}\n")
         f.write("=" * 300 + "\n")
-
-        # Unique Structures Summary
-        f.write(f"\nUnique Structures Summary (energy tolerance: {energy_tolerance:.1e} eV/atom):\n")
-        f.write("-" * 150 + "\n")
-        f.write(f"{'Rank':<6} {'Energy (eV/atom)':<20} {'Energy Difference (meV/atom)':<30} {'Configuration Description':<90}\n")
-        f.write("-" * 150 + "\n")
-
-        for i, result in enumerate(unique_structures):
-            energy = result['energy_per_atom']
-            config_desc = result.get('configuration', 'Unknown')
-
-            # Calculate energy difference from the best structure
-            if i == 0:
-                energy_diff_mev = 0.0
-            else:
-                energy_diff_mev = (energy - unique_structures[0]['energy_per_atom']) * 1000  # Convert to meV
-
-            f.write(f"{i+1:<6} {energy:<20.6f} {energy_diff_mev:<30.2f} {config_desc:<90}\n")
-
-        f.write("-" * 150 + "\n")
 
         # Final Top Structures (for backward compatibility)
         f.write(f"\nFinal Top {len(final_top_structures)} Structures Selected for Analysis:\n")
@@ -2722,7 +3002,6 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
     # Display summary
     with open(overall_summary_filepath, 'r') as f:
         print("\n" + f.read())
-
 
 def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mode_analysis, initial_softest_modes_info_list, max_iterations,
                                soft_mode_displacement_scales, cell_scale_factors, mode2_ratio_scales, num_top_structures_to_analyze, negative_phonon_threshold_thz,
@@ -2766,6 +3045,17 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
     if calculator is None:
         print("Failed to initialize calculator. Exiting.")
         return
+    
+    initial_atoms_for_soft_mode_analysis.set_calculator(calculator)
+    try:
+        E_ref = initial_atoms_for_soft_mode_analysis.get_potential_energy() / len(initial_atoms_for_soft_mode_analysis)
+        print(f"Initial structure reference energy (E_ref): {E_ref:.6f} eV/atom")
+    except Exception as e:
+        print(f"Warning: Could not get E_ref for final analysis filter: {e}. Filtering by +10meV will be skipped.")
+        E_ref = None
+    
+    # Define the 10 meV threshold
+    E_limit_threshold = 0.010 # 10 meV/atom
 
     # Generate comprehensive supercell variants - all permutations up to max size
     def generate_comprehensive_supercell_variants(max_size=2):
@@ -2824,7 +3114,11 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
     
     for iteration_idx in range(start_iteration, max_iterations + 1):
         # Generate supercell variants only in the first iteration (iter_0 equivalent)
-        if iteration_idx == 1:
+        if args.constrained_supercell_growth:
+            # Override the variants for this iteration based on the cyclic rule
+            supercell_variants = get_constrained_supercell_variants(iteration_idx)
+            print(f"  Constrained growth enabled. Allowed supercells: {supercell_variants}")
+        elif iteration_idx == 1:
             supercell_variants = generate_comprehensive_supercell_variants(max_size=2)
             print(f"FIRST ITERATION: Generated comprehensive supercell variants: {supercell_variants}")
         else:
@@ -2875,7 +3169,7 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                 np.random.seed(random_seed + iteration_idx * 1000 + sample_idx)
 
             # Supercell selection strategy based on iteration
-            if iteration_idx == 1:
+            if iteration_idx == 1 or args.constrained_supercell_growth:
                 # FIRST ITERATION: Use different supercell variants for diversity
                 # Ensure each sample gets a different supercell variant when possible
                 variant_index = sample_idx % len(supercell_variants)
@@ -2888,9 +3182,22 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                     selected_supercell = current_best_supercell
                     print(f"    SUBSEQUENT ITERATION: Using best supercell from previous iteration: {selected_supercell}")
                 else:
-                    # Fallback to primitive cell if no best supercell is available
-                    selected_supercell = (1, 1, 1)
-                    print(f"    SUBSEQUENT ITERATION: Using primitive cell (1,1,1) as fallback")
+                    # SUBSEQUENT ITERATIONS: Skip supercell variant generation
+                    if current_best_supercell is not None:
+                        # FIX: Check if the locked supercell violates the new atom limit
+                        nx, ny, nz = current_best_supercell
+                        num_atoms = len(current_primitive_atoms) * nx * ny * nz
+                        limit = getattr(args, 'max_atoms_per_supercell', None)
+                        
+                        if limit is not None and num_atoms > limit:
+                            print(f"    WARNING: Previous best supercell {current_best_supercell} ({num_atoms} atoms) exceeds limit ({limit}).")
+                            print(f"    Downgrading to (1, 1, 1) to respect constraints.")
+                            selected_supercell = (1, 1, 1)
+                        else:
+                            selected_supercell = current_best_supercell
+                            print(f"    SUBSEQUENT ITERATION: Using best supercell from previous iteration: {selected_supercell}")
+                    else:
+                        selected_supercell = (1, 1, 1)
 
             # Generate variable maximum displacement bounds for this sample
             min_disp = random_displacement_bounds[0]  # Keep minimum fixed
@@ -2944,18 +3251,35 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                 lowest_energy_sample = find_lowest_energy_structures(relaxed_structures_info, num_to_select=1)
                 if lowest_energy_sample:
                     best_result_for_sample = lowest_energy_sample[0]
+                    relaxed_atoms_obj = best_result_for_sample['relaxed_atoms']
+                    
+                    # --- ROBUSTNESS FIX START ---
+                    # 1. Convert cell parameters to standard list
+                    current_cell_pars = relaxed_atoms_obj.get_cell().cellpar()
+                    if isinstance(current_cell_pars, np.ndarray):
+                        current_cell_pars = current_cell_pars.tolist()
+                        
+                    # 2. Ensure supercell is tuple of python ints
+                    if isinstance(selected_supercell, (list, np.ndarray)):
+                        selected_supercell = tuple(int(x) for x in selected_supercell)
+                        
+                    # 3. Create a clean params dictionary with standard types
+                    clean_params = {
+                        'displacement_bounds': [float(x) for x in sample_displacement_bounds],
+                        'cell_transformation_vector': [float(x) for x in cell_transformation_vector],
+                        'cell_perturbation': bool(random_cell_perturbation)
+                    }
+                    # --- ROBUSTNESS FIX END ---
+
                     iteration_results.append({
-                        'params': {
-                            'displacement_bounds': sample_displacement_bounds,
-                            'cell_transformation_vector': cell_transformation_vector,
-                            'cell_perturbation': random_cell_perturbation
-                        },
+                        'params': clean_params,
                         'energy_per_atom': best_result_for_sample['energy_per_atom'],
                         'relaxed_atoms': best_result_for_sample['relaxed_atoms'],
                         'original_file': best_result_for_sample['original_file'],
                         'num_atoms': best_result_for_sample.get('num_atoms', 'N/A'),
                         'international_symbol': best_result_for_sample.get('international_symbol', 'N/A'),
                         'crystal_system': best_result_for_sample.get('crystal_system', 'N/A'),
+                        'cell_params': current_cell_pars,
                         'iteration': iteration_idx,
                         'sample': sample_counter,
                         'selected_supercell': selected_supercell
@@ -3136,7 +3460,19 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
 
     # Sort all structures by energy
     sorted_all_structures = sorted(all_iterations_results, key=lambda x: x['energy_per_atom'])
-
+    if E_ref is not None:
+        filtered_results = [
+            r for r in sorted_all_structures 
+            if r['energy_per_atom'] <= (E_ref + E_limit_threshold)
+        ]
+        num_excluded = len(sorted_all_structures) - len(filtered_results)
+        print(f"Energy Filter: Excluded {num_excluded} structures with energy > {E_ref + E_limit_threshold:.6f} eV/atom (E_ref + 10meV).")
+        sorted_all_structures = filtered_results
+    
+    if not sorted_all_structures:
+        print("No structures remain within 10meV of the initial structure. Skipping final analysis.")
+        return
+    
     for result in sorted_all_structures:
         energy = result['energy_per_atom']
         is_unique = True
@@ -3151,7 +3487,6 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
             unique_structures.append(result)
 
     print(f"Found {len(unique_structures)} unique structures (energy tolerance: {energy_tolerance:.1e} eV/atom)")
-
     # Find top structures across all iterations
     sorted_results = sorted(all_iterations_results, key=lambda x: x['energy_per_atom'])
     final_top_structures = []
@@ -3166,6 +3501,8 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
     # Create final structures directory and save structures
     final_structures_dir = os.path.join(base_output_dir, "final_structures")
     os.makedirs(final_structures_dir, exist_ok=True)
+    _generate_optimization_summary(base_output_dir, all_iterations_results, unique_structures, "GA")
+    final_phonon_metadata = []
 
     print(f"\n--- Saving and Analyzing Final Top {len(final_top_structures)} Structures ---")
 
@@ -3213,8 +3550,21 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                 traceback.print_exc()
 
     # Create individual phonon analysis folders for top structures
+    # 1. GENERATE ENERGY SUMMARY IMMEDIATELY
+    _generate_optimization_summary(base_output_dir, all_iterations_results, unique_structures, "Random_Search")
+
+    final_phonon_metadata = []
+
+    # Create individual phonon analysis folders for top structures
     print(f"\n--- Creating Individual Phonon Analysis Folders for Top {len(final_top_structures)} Structures ---")
     for i, (energy_per_atom, relaxed_atoms, params) in enumerate(final_top_structures):
+        struct_index = i + 1
+
+        # --- CHECKPOINT SKIP LOGIC ---
+        if resume_from_checkpoint and should_skip_final_analysis(checkpoint_state, 'top', struct_index):
+            print(f"  ⏭ Skipping final analysis for top structure #{struct_index} (already done)")
+            continue
+        # -----------------------------
         try:
             # Create energy string for folder name
             energy_str = f"m{abs(energy_per_atom):.4f}".replace('.', 'p')
@@ -3226,8 +3576,8 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
             pmg_structure = AseAtomsAdaptor.get_structure(relaxed_atoms)
             primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(SpacegroupAnalyzer(pmg_structure).get_primitive_standard_structure())
 
-            # Run phonon analysis
-            _, _, _, _ = run_single_phonon_analysis(
+            # Run phonon analysis - CAPTURE RETURNS
+            soft_modes, bsmin, time_calc, tracked_data = run_single_phonon_analysis(
                 primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units,
                 args.supercell_dims, args.delta, args.fmax, final_phonon_dir,
                 prefix=f"final_{original_prefix}_top_{i+1}_energy_{energy_str}",
@@ -3237,10 +3587,29 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structures_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
-                save_yaml=args.save_yaml
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos
             )
             print(f"  Completed phonon analysis for top structure {i+1}")
+            
+            # COLLECT METADATA
+            sg_symbol = SpacegroupAnalyzer(pmg_structure).get_space_group_symbol()
+            final_phonon_metadata.append({
+                'index': i + 1,
+                'energy': energy_per_atom,
+                'space_group': sg_symbol,
+                'min_freq': bsmin,
+                'soft_modes': soft_modes,
+                'path': final_phonon_dir
+            })
 
+            # --- SAVE CHECKPOINT ---
+            checkpoint_manager.save_checkpoint_final_analysis(
+                'top', struct_index, all_iterations_results, 
+                {'iteration': max_iterations},
+                current_primitive_atoms
+            )
+            # -----------------------
         except Exception as e:
             print(f"  Error creating phonon analysis for top structure {i+1}: {e}")
             import traceback
@@ -3248,8 +3617,16 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
 
     # Create individual phonon analysis folders for additional unique structures
     if additional_unique_structures:
+        
         print(f"\n--- Creating Individual Phonon Analysis Folders for {len(additional_unique_structures)} Additional Unique Structures ---")
         for i, result in enumerate(additional_unique_structures):
+            struct_index = i + 1
+
+            # --- CHECKPOINT SKIP LOGIC ---
+            if resume_from_checkpoint and should_skip_final_analysis(checkpoint_state, 'unique', struct_index):
+                print(f"  ⏭ Skipping final analysis for unique structure #{struct_index} (already done)")
+                continue
+            # -----------------------------
             try:
                 energy_per_atom = result['energy_per_atom']
                 relaxed_atoms = result['relaxed_atoms']
@@ -3264,8 +3641,8 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                 pmg_structure = AseAtomsAdaptor.get_structure(relaxed_atoms)
                 primitive_atoms_for_phonon = AseAtomsAdaptor.get_atoms(SpacegroupAnalyzer(pmg_structure).get_primitive_standard_structure())
 
-                # Run phonon analysis
-                _, _, _, _ = run_single_phonon_analysis(
+                # Run phonon analysis - CAPTURE RETURNS
+                soft_modes, bsmin, time_calc, tracked_data = run_single_phonon_analysis(
                     primitive_atoms_for_phonon.copy(), calculator, args.engine, args.units,
                     args.supercell_dims, args.delta, args.fmax, final_phonon_dir,
                     prefix=f"final_{original_prefix}_unique_{i+1}_energy_{energy_str}",
@@ -3275,14 +3652,35 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                     num_modes_to_return=num_modes_to_return,
                     final_structures_dir=final_structures_dir,
                     negative_phonon_threshold=negative_phonon_threshold_thz,
-                    save_yaml=args.save_yaml
+                    save_yaml=args.save_yaml,
+                    compute_pdos=args.compute_pdos
                 )
                 print(f"  Completed phonon analysis for unique structure {i+1}")
+                
+                # COLLECT METADATA
+                final_phonon_metadata.append({
+                    'index': f"U{i+1}",
+                    'energy': energy_per_atom,
+                    'space_group': result.get('international_symbol', 'N/A'),
+                    'min_freq': bsmin,
+                    'soft_modes': soft_modes,
+                    'path': final_phonon_dir
+                })
 
+                # --- SAVE CHECKPOINT ---
+                checkpoint_manager.save_checkpoint_final_analysis(
+                    'unique', struct_index, all_iterations_results, 
+                    {'iteration': max_iterations},
+                    current_primitive_atoms
+                )
+                # -----------------------
             except Exception as e:
                 print(f"  Error creating phonon analysis for unique structure {i+1}: {e}")
                 import traceback
                 traceback.print_exc()
+
+    # 2. GENERATE PHONON SUMMARY AFTER LOOP
+    _generate_final_phonon_summary(base_output_dir, final_phonon_metadata)
 
 
 
@@ -3318,9 +3716,9 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
 
         # All Successful Structures Table (GA-style formatting with structural information)
         f.write("All Successful Structures (sorted by energy):\n")
-        f.write("=" * 250 + "\n")
-        f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy (eV/atom)':<25} {'Iter':<5} {'Sample':<8} {'Random Parameters':<80}\n")
-        f.write("=" * 250 + "\n")
+        f.write("=" * 300 + "\n")
+        f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy (eV/atom)':<25} {'Cell Params (a,b,c,α,β,γ)':<55} {'Iter':<5} {'Sample':<8} {'Random Parameters':<80}\n")
+        f.write("=" * 300 + "\n")
 
         for i, result in enumerate(sorted_results):
             num_atoms = result.get('num_atoms', 'N/A')
@@ -3331,6 +3729,8 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
             sample_id = result.get('sample', 'N/A')
             selected_supercell = result.get('selected_supercell', 'N/A')
             params = result.get('params', ('N/A', 'N/A', 'N/A'))
+            cp = result.get('cell_params', [0,0,0,0,0,0])
+            cp_str = f"{cp[0]:.2f} {cp[1]:.2f} {cp[2]:.2f} {cp[3]:.1f} {cp[4]:.1f} {cp[5]:.1f}"
 
             # Extract parameters in GA style
             if isinstance(params, tuple) and len(params) >= 3:
@@ -3359,30 +3759,9 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                 params_str = str(params)
 
             energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)
-            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {str(iteration):<5} {str(sample_id):<8} {params_str:<80}\n")
-
+            # Update Row writing
+            f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {cp_str:<55} {str(iteration):<5} {str(sample_id):<8} {params_str:<80}\n")
         f.write("=" * 150 + "\n")
-
-        # Unique Structures Summary
-        f.write(f"\nUnique Structures Summary (energy tolerance: {energy_tolerance:.1e} eV/atom):\n")
-        f.write("-" * 100 + "\n")
-        f.write(f"{'Rank':<6} {'Energy (eV/atom)':<20} {'Energy Difference (meV/atom)':<30} {'Iteration':<10} {'Sample':<8}\n")
-        f.write("-" * 100 + "\n")
-
-        for i, result in enumerate(unique_structures):
-            energy = result['energy_per_atom']
-            iteration = result.get('iteration', 'N/A')
-            sample_id = result.get('sample', 'N/A')
-
-            # Calculate energy difference from the best structure
-            if i == 0:
-                energy_diff_mev = 0.0
-            else:
-                energy_diff_mev = (energy - unique_structures[0]['energy_per_atom']) * 1000  # Convert to meV
-
-            f.write(f"{i+1:<6} {energy:<20.6f} {energy_diff_mev:<30.2f} {iteration:<10} {sample_id:<8}\n")
-
-        f.write("-" * 100 + "\n")
 
         # Final Top Structures (GA-style formatting)
         f.write(f"\nFinal Top {len(final_top_structures)} Structures Selected for Analysis:\n")
@@ -3652,7 +4031,8 @@ def run_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structures_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
-                save_yaml=args.save_yaml
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos
             )
             print(f"  Completed phonon analysis for {img_type} image")
 
@@ -3880,7 +4260,8 @@ def run_ci_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_s
                 num_modes_to_return=num_modes_to_return,
                 final_structures_dir=final_structures_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
-                save_yaml=args.save_yaml
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos
             )
             print(f"  Completed phonon analysis for {img_type} image")
 

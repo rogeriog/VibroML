@@ -360,6 +360,7 @@ def initialize_calculator(engine, model_name="medium-omat-0", checkpoint_path=No
         print(f"Initializing MACE calculator on device: {device}...")
         calculator = mace_mp(model=model_name, dispersion=False, default_dtype="float64", device=device, stress=True)
     elif engine == "esen":
+        import torch
         if not HAVE_ESEN:
             sys.exit("fairchem-core not found")
         from fairchem.core.common.relaxation.ase_utils import OCPCalculator
@@ -400,8 +401,12 @@ def initialize_calculator(engine, model_name="medium-omat-0", checkpoint_path=No
         if not os.path.exists(checkpoint_model_path):
              sys.exit(f"eSEN model not found at {checkpoint_model_path}")
         print(f"Initializing eSEN calculator with model: {checkpoint_model_path}...")
-        calculator = OCPCalculator(checkpoint_path=checkpoint_model_path, cpu=True)
+        device_is_cpu = not torch.cuda.is_available()
+        print(f"eSEN using CPU only: {device_is_cpu}")
+        calculator = OCPCalculator(checkpoint_path=checkpoint_model_path, cpu=device_is_cpu)
     elif engine == "uma":
+        print("Initializing UMA calculator...")
+        import torch
         if not HAVE_UMA:
             sys.exit("fairchem-core (new API) not found")
         if FAIRCHEM_API_VERSION == "new":
@@ -445,7 +450,11 @@ def initialize_calculator(engine, model_name="medium-omat-0", checkpoint_path=No
                 sys.exit(f"UMA model not found at {checkpoint_model_path}")
             print(f"Initializing UMA calculator with model: {checkpoint_model_path}...")
             try:
-                predict_unit = load_predict_unit(checkpoint_model_path, device="cpu")
+                # FIX: Detect GPU
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                print(f"UMA using device: {device}")
+                
+                predict_unit = load_predict_unit(checkpoint_model_path, device=device)
                 calculator = FAIRChemCalculator(predict_unit=predict_unit, task_name="omc")
             except Exception as e:
                 sys.exit(f"Failed to initialize UMA calculator: {e}")

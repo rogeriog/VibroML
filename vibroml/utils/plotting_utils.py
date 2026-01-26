@@ -109,3 +109,89 @@ def plot_phonon_results(
    plt.close(fig)
 
    print(f"Phonon band structure and DOS plot saved to {png_path} and {svg_path}")
+
+def plot_pdos(
+    atom_pdos_list,
+    frequency_points,
+    units,
+    output_dir,
+    prefix,
+    struct_formula
+):
+    """
+    Generates and saves a Projected DOS (PDOS) plot grouped by element.
+    
+    Args:
+        atom_pdos_list (list): List of dicts [{'index': i, 'symbol': 'Si', 'pdos': [...]}, ...]
+        frequency_points (list): The frequency/energy x-axis points.
+        units (str): Units label (e.g. "THz").
+        output_dir (str): Output directory.
+        prefix (str): Filename prefix.
+        struct_formula (str): Chemical formula for title.
+    """
+    if not atom_pdos_list or not frequency_points:
+        print("Warning: No PDOS data to plot.")
+        return
+
+    # 1. Aggregate PDOS by Element
+    element_pdos = {}
+    total_pdos = np.zeros(len(frequency_points))
+    
+    for atom_data in atom_pdos_list:
+        symbol = atom_data['symbol']
+        pdos_values = np.array(atom_data['pdos'])
+        
+        if symbol not in element_pdos:
+            element_pdos[symbol] = np.zeros(len(frequency_points))
+        
+        element_pdos[symbol] += pdos_values
+        total_pdos += pdos_values
+
+    # 2. Plot setup
+    plt.rc("figure", dpi=150)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    
+    # Plot Total DOS (filled area background) 
+    ax.fill_between(
+        frequency_points, 
+        total_pdos, 
+        color='lightgrey', 
+        alpha=0.3, 
+        label='Total DOS'
+    )
+    
+    # Plot Elemental contributions
+    # Define a distinct color cycle
+    colors = plt.cm.tab10.colors  
+    
+    for i, (symbol, pdos) in enumerate(element_pdos.items()):
+        color = colors[i % len(colors)]
+        ax.plot(
+            frequency_points, 
+            pdos, 
+            label=f"{symbol}", 
+            color=color, 
+            linewidth=1.5
+        )
+
+    # Styling
+    ax.set_xlabel(f"Frequency ({units})", fontsize=12)
+    ax.set_ylabel("Density of States (states/unit freq.)", fontsize=12)
+    ax.set_title(f"Phonon Projected DOS: {struct_formula}", fontsize=13, y=1.02)
+    ax.legend(loc='upper right', frameon=True, fontsize=10)
+    ax.grid(True, which='major', linestyle='--', alpha=0.4)
+    
+    # Set x-limits to valid range
+    ax.set_xlim(min(frequency_points), max(frequency_points))
+    ax.set_ylim(bottom=0)
+
+    # 3. Save
+    png_path = os.path.join(output_dir, f"{prefix}_pdos.png")
+    svg_path = os.path.join(output_dir, f"{prefix}_pdos.svg")
+    
+    plt.tight_layout()
+    plt.savefig(png_path, dpi=300)
+    plt.savefig(svg_path)
+    plt.close(fig)
+    
+    print(f"Phonon PDOS plot saved to {png_path}")

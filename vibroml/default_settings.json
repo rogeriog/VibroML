@@ -23,7 +23,7 @@
     "ga_mutation_rate": 0.2,
     "decomposition_threshold": 0.5,
     "ga_generations": 3,
-    "default_method": "ga",
+    "default_method": "phonon_only",
     "random_displacement_bounds": [0.1, 2.0],
     "random_cell_perturbation": true,
     "random_seed": null,

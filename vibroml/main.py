@@ -320,7 +320,8 @@ def main():
                 q_point_for_specific_mode=q_point_start,
                 band_idx_for_specific_mode=args.band_idx,
                 num_modes_to_return=0, 
-                save_yaml=args.save_yaml
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos
             )
 
             # 3. Set required variables for the GA step
@@ -435,7 +436,8 @@ def main():
             traj_kT=args.traj_kT,
             num_modes_to_return=args.num_modes_to_return,
             negative_phonon_threshold=args.negative_phonon_threshold_thz,
-            save_yaml=args.save_yaml
+            save_yaml=args.save_yaml,
+            compute_pdos=args.compute_pdos
         )
 
         # Now run the optimization workflow with the phonon results
@@ -615,7 +617,8 @@ def main():
             displacement_magnitude=args.displacement,
             preloaded_eigenmode_data=preloaded_eigenmode_data,
             negative_phonon_threshold=args.negative_phonon_threshold_thz,
-            save_yaml=args.save_yaml
+            save_yaml=args.save_yaml,
+            compute_pdos=args.compute_pdos
         )
 
         

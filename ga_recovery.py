@@ -183,5 +183,6 @@ def recover_all(run_directory):
 
 if __name__ == "__main__":
     # Your target directory
-    target_dir = "./examples/Bi2Sn2O7/Sn2Bi2O7_MACE_GA_phonon_output_20260107-205131"
+    # target_dir = "./examples/Bi2Sn2O7/Sn2Bi2O7_MACE_GA_phonon_output_20260107-205131"
+    target_dir = "/gpfs/scratch/acad/htforft/rgouvea/vibroml_runs/VibroML/examples/heusler_CeCoBi/id_025/id_025_UMA_GA_phonon_output_20260118-165031"
     recover_all(target_dir)

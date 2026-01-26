@@ -11,14 +11,142 @@ from ase.phonons import Phonons
 from ase.io import read, write
 from ase.atoms import Atoms
 from ase.build import make_supercell
+from ase.dft.kpoints import monkhorst_pack
+# --- START FIX: Handle older ASE versions missing ase.spectrum.dos ---
+try:
+    from ase.spectrum.dos import DOS
+except ImportError:
+    # Fallback implementation for older ASE versions
+    class DOS:
+        def __init__(self, energies, weights=None, width=0.1, npts=200):
+            """
+            Simple Gaussian smearing DOS implementation to replace ase.spectrum.dos.DOS
+            """
+            self.energies = np.asarray(energies).flatten()
+            if weights is None:
+                self.weights = np.ones_like(self.energies)
+            else:
+                self.weights = np.asarray(weights).flatten()
+            self.width = width
+            
+            # Determine energy grid range (min - 3sigma to max + 3sigma)
+            min_e = self.energies.min() - 3.0 * width
+            max_e = self.energies.max() + 3.0 * width
+            self.energy_grid = np.linspace(min_e, max_e, npts)
+            
+        def get_energies(self):
+            return self.energy_grid
+            
+        def get_weights(self):
+            # Vectorized Gaussian smearing
+            # delta shape: (npts, n_energies)
+            delta = self.energy_grid[:, None] - self.energies[None, :]
+            # Gaussian formula: (1/(sigma*sqrt(2pi))) * exp(-0.5 * (x/sigma)^2)
+            prefactor = 1.0 / (self.width * np.sqrt(2 * np.pi))
+            gaussians = prefactor * np.exp(-0.5 * (delta / self.width)**2)
+            # Sum weighted gaussians
+            return np.dot(gaussians, self.weights)
+# --- END FIX ---
 
 # Ensure these imports are correct based on your project structure
 from .config import EV_TO_THZ_FACTOR, THZ_TO_CM_FACTOR, EV_TO_CM_FACTOR
-from .plotting_utils import plot_phonon_results
+from .plotting_utils import plot_phonon_results, plot_pdos
 from .utils import save_raw_data
 from .genetic_algorithm import GeneticAlgorithm
 from .structure_utils import estimate_commensurate_supercell_size
-def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False):
+def calculate_and_save_pdos(ph, dos_grid, width, npts, output_dir, prefix, units, conversion_divisor, struct_formula):
+   """
+   Calculates Projected Density of States (PDOS) for phonons and saves to JSON.
+   
+   Args:
+      ph (Phonons): ASE Phonons object
+      dos_grid (tuple): grid for q-point sampling (e.g. (40,40,40))
+      width (float): Gaussian smearing width in target units
+      npts (int): Number of energy points
+      output_dir (str): Output directory
+      prefix (str): File prefix
+      units (str): Unit label (e.g. 'THz')
+      conversion_divisor (float): Factor to divide eV by to get target units
+      struct_formula (str): Chemical formula of the structure
+   """
+   print("\n--- Calculating Projected DOS (PDOS) ---")
+   start_time = time.time()
+   
+   # 1. Generate Q-points for the full Brillouin zone
+   qpoints = monkhorst_pack(dos_grid)
+   
+   # 2. Get frequencies and eigenvectors at these q-points
+   # This step can be time consuming as it requires diagonalization at every q-point
+   print(f"  Diagonalizing dynamical matrix at {len(qpoints)} q-points...")
+   frequencies_ev, modes = ph.band_structure(qpoints, modes=True, verbose=False)
+   
+   # Convert frequencies to the requested unit (e.g., THz)
+   frequencies = frequencies_ev / conversion_divisor
+   
+   # 3. Calculate weights: |e_i|^2 for each atom i
+   # modes shape: (n_q, n_bands, n_atoms, 3) (complex)
+   # weights shape: (n_q, n_bands, n_atoms) (real)
+   # We sum the squared magnitudes of the x, y, z components
+   weights = np.linalg.norm(modes, axis=3)**2 
+   
+   # 4. Generate DOS curves
+   atom_pdos_list = []
+   frequency_points = None
+   
+   # We iterate over atoms to create a DOS for each
+   for i, atom in enumerate(ph.atoms):
+      # Extract weights for this specific atom across all q-points and bands
+      # Shape becomes (n_q, n_bands) which ASE DOS accepts
+      atom_weights = weights[:, :, i]
+      
+      # Create DOS object to handle smearing
+      # Note: We use the converted frequencies directly
+      dos_object = DOS(frequencies, weights=atom_weights, width=width, npts=npts)
+      
+      # Store the energy grid (frequency points) from the first iteration
+      if frequency_points is None:
+         frequency_points = dos_object.get_energies().tolist()
+         
+      atom_pdos_list.append({
+         "index": i,
+         "symbol": atom.symbol,
+         "pdos": dos_object.get_weights().tolist()
+      })
+   
+   # 5. Save structure to JSON
+   pdos_data = {
+      "units": units,
+      "smearing_width": width,
+      "frequency_points": frequency_points,
+      "atoms": atom_pdos_list
+   }
+   
+   pdos_filename = os.path.join(output_dir, f"{prefix}_pdos.json")
+   try:
+      with open(pdos_filename, 'w') as f:
+         json.dump(pdos_data, f) # No indent to keep file size smaller, or use indent=2
+      print(f"  PDOS data saved to: {pdos_filename}")
+   except Exception as e:
+      print(f"  Error saving PDOS data: {e}")
+      
+   print(f"  PDOS calculation took {time.time() - start_time:.2f} s")
+   # 6. Plot PDOS
+   try:
+      plot_pdos(
+            atom_pdos_list=atom_pdos_list,
+            frequency_points=frequency_points,
+            units=units,
+            output_dir=output_dir,
+            prefix=prefix,
+            struct_formula=struct_formula
+      )
+   except Exception as e:
+      print(f"  Error plotting PDOS: {e}")
+      import traceback
+      traceback.print_exc()
+      
+   print(f"  PDOS calculation took {time.time() - start_time:.2f} s")
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False):
    """
    Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
 
@@ -153,6 +281,34 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
    print("\n--- Step 2: Getting and Processing Phonon Results ---")
    bs, path, dos, bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, discontinuities, y_label, bsmin = get_phonon_results(ph, atoms, units, phonon_path_npoints, phonon_dos_grid)
 
+   # Determine conversion divisor based on units
+   # We divide eV by this number to get the target unit
+   if units == "THz":
+      conversion_divisor = EV_TO_THZ_FACTOR
+   elif units == "cm-1":
+      # eV -> cm-1: eV * (THZ_TO_CM / EV_TO_THZ) = eV * EV_TO_CM
+      # So divisor = 1 / EV_TO_CM = EV_TO_THZ / THZ_TO_CM
+      conversion_divisor = EV_TO_THZ_FACTOR / THZ_TO_CM_FACTOR
+   elif units == "eV":
+      conversion_divisor = 1.0
+   else:
+      conversion_divisor = 1.0
+   struct_formula = atoms.get_chemical_formula()
+   if compute_pdos:
+      # Calculate and save PDOS 
+      calculate_and_save_pdos(
+         ph=ph, 
+         dos_grid=phonon_dos_grid, 
+         width=1e-4,  # Standard width matching get_phonon_results
+         npts=200,    # Standard npts matching get_phonon_results
+         output_dir=output_dir, 
+         prefix=prefix, 
+         units=units, 
+         conversion_divisor=conversion_divisor,
+         struct_formula=struct_formula
+      )
+   else:
+       print("--- Skipping PDOS Calculation (use --compute-pdos to enable) ---")
    print("\n--- Step 3: Saving YAML and Raw Data ---")
    if save_yaml:
        save_phonopy_band_yaml(ph, path, bs, all_k_point_distances, output_dir, prefix)
@@ -415,38 +571,40 @@ def add_frequency_to_structure_filenames(final_structures_dir, analysis_id, soft
 
 
 def run_phonon_calculation_with_custom_supercell(atoms, calculator, supercell_dims, delta, output_dir):
-    """Sets up and runs the phonon calculation with custom supercell dimensions."""
-    from .utils import parse_supercell_dimensions
-    
-    atoms.set_calculator(calculator)
+   """Sets up and runs the phonon calculation with custom supercell dimensions."""
+   from .utils import parse_supercell_dimensions
+   start = time.time()
+   atoms.set_calculator(calculator)
 
-    # Parse supercell dimensions
-    supercell = parse_supercell_dimensions(supercell_dims)
+   # Parse supercell dimensions
+   supercell = parse_supercell_dimensions(supercell_dims)
 
-    print("\n### Structure for Phonon Calculation ###")
-    print("   The phonon band structure will be calculated using the current structure.")
-    print(f"   Using supercell size: {supercell}")
-    print(f"   Using displacement delta: {delta}")
+   print("\n### Structure for Phonon Calculation ###")
+   print("   The phonon band structure will be calculated using the current structure.")
+   print(f"   Using supercell size: {supercell}")
+   print(f"   Using displacement delta: {delta}")
 
-    # Phonon calculator
-    phonon_calc_path = os.path.join(output_dir, "phonon_files_temp")       
-    if os.path.exists(phonon_calc_path):  
-        print(f"   Clearing existing phonon calculation directory: {phonon_calc_path}")  
-        shutil.rmtree(phonon_calc_path)
-    ph = Phonons(atoms, calculator, supercell=supercell, delta=delta, name=phonon_calc_path)
-    ph.run()
+   # Phonon calculator
+   phonon_calc_path = os.path.join(output_dir, "phonon_files_temp")       
+   if os.path.exists(phonon_calc_path):  
+      print(f"   Clearing existing phonon calculation directory: {phonon_calc_path}")  
+      shutil.rmtree(phonon_calc_path)
+   ph = Phonons(atoms, calculator, supercell=supercell, delta=delta, name=phonon_calc_path)
+   ph.run()
 
-    # Read forces and assemble the dynamical matrix
-    ph.read(acoustic=True)
-    ph.clean()
-
-    print("Phonon calculation completed.")
-    return ph
+   # Read forces and assemble the dynamical matrix
+   ph.read(acoustic=True)
+   ph.clean()
+   
+   print("Phonon calculation completed.")
+   end = time.time()
+   print(f"Phonon calculation took {end - start:.2f} seconds")
+   return ph
 
 def run_phonon_calculation(atoms, calculator, supercell_dims, delta, output_dir):
    """Sets up and runs the phonon calculation."""
    from .utils import parse_supercell_dimensions
-   
+   start = time.time()
    atoms.set_calculator(calculator) # Ensure calculator is set for phonon calculation
 
    # Handle both old supercell_n (integer) and new custom supercell formats
@@ -476,6 +634,8 @@ def run_phonon_calculation(atoms, calculator, supercell_dims, delta, output_dir)
    ph.clean()
 
    print("Phonon calculation completed.")
+   end = time.time()
+   print(f"Phonon calculation took {end - start:.2f} seconds")
    return ph
 
 def save_phonon_results(ph, output_dir, units, bs, dos, dos_energies):

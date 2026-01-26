@@ -27,6 +27,19 @@ from pathlib import Path
 import numpy as np
 from ase import Atoms
 
+class VibroJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder for NumPy types and complex numbers."""
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.complex64, np.complex128, complex)):
+            return {'__complex__': True, 'real': float(obj.real), 'imag': float(obj.imag)}
+        if isinstance(obj, (np.int64, np.int32, np.int8, np.int16, np.uint8, np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        if isinstance(obj, (np.float64, np.float32, np.float16)):
+            return float(obj)
+        return super().default(obj)
+
 class CheckpointManager:
     """
     Manages checkpointing for VibroML optimization runs.
@@ -89,7 +102,7 @@ class CheckpointManager:
         try:
             with os.fdopen(temp_fd, 'wb') as f:
                 with gzip.open(f, 'wt', encoding='utf-8') as gz_file:
-                    json.dump(data, gz_file, indent=2)
+                    json.dump(data, gz_file, indent=2, cls=VibroJSONEncoder)
             
             # Atomic move
             shutil.move(temp_path, str(path))
@@ -113,7 +126,7 @@ class CheckpointManager:
              if field in data_copy:
                  data_copy[field] = self._serialize_complex_data(data_copy[field])
 
-        json_str = json.dumps(data_copy, sort_keys=True, default=str)
+        json_str = json.dumps(data_copy, sort_keys=True, default=str, cls=VibroJSONEncoder)
         return hashlib.sha256(json_str.encode()).hexdigest()[:16]
     
     def _verify_hash(self, data: dict) -> bool:
@@ -150,14 +163,19 @@ class CheckpointManager:
 
     def _serialize_complex_data(self, obj):
         """Recursively convert complex numbers to JSON-safe dicts."""
-        if isinstance(obj, complex):
-            return {'__complex__': True, 'real': obj.real, 'imag': obj.imag}
+        if isinstance(obj, (complex, np.complex64, np.complex128)):
+            return {'__complex__': True, 'real': float(obj.real), 'imag': float(obj.imag)}
         elif isinstance(obj, list):
             return [self._serialize_complex_data(x) for x in obj]
         elif isinstance(obj, dict):
             return {k: self._serialize_complex_data(v) for k, v in obj.items()}
         elif isinstance(obj, np.ndarray):
             return self._serialize_complex_data(obj.tolist())
+        # Handle numpy scalars
+        elif isinstance(obj, (np.int64, np.int32, np.int8, np.int16, np.uint8, np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        elif isinstance(obj, (np.float64, np.float32, np.float16)):
+            return float(obj)
         return obj
 
     def _deserialize_complex_data(self, obj):
@@ -182,6 +200,9 @@ class CheckpointManager:
                     for p in params:
                         if isinstance(p, np.ndarray): converted_params.append(p.tolist())
                         elif isinstance(p, (list, tuple)): converted_params.append(list(p))
+                        # Handle numpy scalars in params tuple
+                        elif isinstance(p, (np.int64, np.int32, np.int8)): converted_params.append(int(p))
+                        elif isinstance(p, (np.float64, np.float32)): converted_params.append(float(p))
                         else: converted_params.append(p)
                     result_copy['params'] = converted_params
             serialized.append(result_copy)
@@ -235,6 +256,13 @@ class CheckpointManager:
 
     def save_checkpoint_opt_random(self, iteration, sample_index, all_iterations_results, current_primitive_atoms=None, current_best_supercell=None):
         """Save checkpoint for opt_random mode."""
+        # Ensure current_best_supercell is JSON serializable if it's a numpy array or tuple of numpy ints
+        if current_best_supercell is not None:
+            if isinstance(current_best_supercell, np.ndarray):
+                current_best_supercell = current_best_supercell.tolist()
+            elif isinstance(current_best_supercell, (list, tuple)):
+                current_best_supercell = [int(x) if isinstance(x, (np.int64, np.int32)) else x for x in current_best_supercell]
+
         self._save_generic_checkpoint('opt_random', {
             'iteration': iteration,
             'sample_index': sample_index,
@@ -258,7 +286,9 @@ class CheckpointManager:
             checkpoint_data['current_softest_modes'] = self._serialize_complex_data(soft_modes)
             
         if extra_data:
-            checkpoint_data.update(extra_data)
+            # Pre-process extra data to handle complex/numpy types
+            processed_extra_data = {k: self._serialize_complex_data(v) for k, v in extra_data.items()}
+            checkpoint_data.update(processed_extra_data)
             
         checkpoint_data['hash'] = self._compute_hash(checkpoint_data)
         
@@ -384,7 +414,61 @@ class CheckpointManager:
         
         metadata['checkpoints'] = to_keep
         self._write_json_atomic(self.metadata_path, metadata)
+    
+    def save_checkpoint_final_analysis(self, structure_type, index, all_results, state_info, current_primitive_atoms=None):
+        """
+        Saves checkpoint during the final phonon analysis phase.
+        
+        Args:
+            structure_type: 'top' or 'unique'
+            index: current structure index being processed
+            all_results: all_iterations_results list
+            state_info: dictionary containing current iteration/generation for context
+            current_primitive_atoms: (Optional) The primitive atoms object
+        """
+        state_dict = state_info.copy()
+        state_dict.update({
+            'phase': 'final_analysis',
+            'final_struct_type': structure_type,
+            'final_struct_index': index,
+            'total_samples_completed': len(all_results)
+        })
+        
+        self._save_generic_checkpoint(
+            self.mode, 
+            state_dict, 
+            all_results, 
+            current_primitive_atoms
+        )
 
+def should_skip_final_analysis(checkpoint_state, current_type, current_index):
+    """
+    Determine if final analysis for a specific structure should be skipped.
+    
+    Args:
+        checkpoint_state (dict): The loaded checkpoint state
+        current_type (str): 'top' or 'unique'
+        current_index (int): The index of the structure being processed
+        
+    Returns:
+        bool: True if this step should be skipped
+    """
+    if not checkpoint_state or checkpoint_state.get('phase') != 'final_analysis':
+        return False
+    
+    saved_type = checkpoint_state.get('final_struct_type')
+    saved_index = checkpoint_state.get('final_struct_index', 0)
+
+    # If we are doing 'top' but saved state is already at 'unique', skip 'top'
+    if current_type == 'top' and saved_type == 'unique':
+        return True
+    
+    # If types match, check index
+    if current_type == saved_type:
+        if current_index <= saved_index:
+            return True
+            
+    return False
 def should_skip_sample(checkpoint_state: Optional[dict], current_state: dict, mode: str) -> bool:
     """Determine if current sample should be skipped based on checkpoint state."""
     if checkpoint_state is None:

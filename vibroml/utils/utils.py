@@ -230,7 +230,7 @@ def get_arg_parser_and_settings():
         "ga_mutation_rate": default_settings.get("ga_mutation_rate", 0.1),
         "ga_generations": default_settings.get("ga_generations", 3),
         "num_new_points_per_iteration": default_settings.get("num_new_points_per_iteration", 30),
-        "default_method": default_settings.get("default_method", "ga"),
+        "default_method": default_settings.get("default_method", "phonon_only"),
         "random_displacement_bounds": default_settings.get("random_displacement_bounds", [0.1, 2.0]),
         "random_cell_perturbation": default_settings.get("random_cell_perturbation", True),
         "random_seed": default_settings.get("random_seed", None),
@@ -261,7 +261,7 @@ def get_arg_parser_and_settings():
     parser.add_argument("--volume-expansion-threshold", type=float, default=settings["volume_expansion_threshold"], help=f"Volume expansion threshold for relaxation stopping criterion (default: {settings['volume_expansion_threshold']}). Relaxation stops if volume expands > threshold × initial volume.")
     parser.add_argument("--max-atoms-per-supercell", type=int, default=settings["max_atoms_per_supercell"], help=f"Maximum number of atoms allowed in generated supercells (default: None = no limit). When set, supercells exceeding this limit will be skipped.")
     parser.add_argument("--auto", action="store_true", help="Automatically run parameter sweep and soft mode optimization.")
-    parser.add_argument("--method", type=str, default=settings["default_method"], choices=["ga", "traditional", "traditional_all", "opt_random", "neb", "ci_neb", "md_stability"], help=f"Method for soft mode optimization (default: {settings['default_method']}).")
+    parser.add_argument("--method", type=str, default=settings["default_method"], choices=["ga", "traditional", "traditional_all", "opt_random", "neb", "ci_neb", "md_stability", "phonon_only"], help=f"Method for soft mode optimization (default: {settings['default_method']}).")
     parser.add_argument("--output-prefix", type=str, default=None, help="Optional custom prefix to add before the structure name in output folder names.")
     
     # [ADDED THIS LINE]
@@ -302,6 +302,10 @@ def get_arg_parser_and_settings():
                         help=f'Energy threshold (in eV) below reference energy for flagging structures as decomposed. '
                              f'Structures with E_relax < E_ref - decomposition_threshold are flagged as DECOMPOSED. '
                              f'Default: {settings["decomposition_threshold"]} eV')
+    parser.add_argument("--constrained-supercell-growth", action="store_true", 
+                    help="Enable incremental supercell variants: (1,1,1) -> +(2,1,1) -> +(1,2,1) -> +(1,1,2) iteratively.")
+    parser.add_argument("--maximum-indexes-on-same-points", type=int, default=None,
+                    help="Limit the number of modes per high-symmetry point in traditional_all method.")
 
     # NEB-specific arguments
     parser.add_argument('--final_cif', type=str, default=None,
@@ -324,7 +328,8 @@ def get_arg_parser_and_settings():
     # Optional phonon calculations for NEB methods
     parser.add_argument('--with-phonon', action='store_true', default=False,
                         help='Include phonon calculations in NEB methods. By default, NEB methods only perform NEB optimization without phonon analysis.')
-
+    parser.add_argument('--compute-pdos', action='store_true', default=False,
+                        help='Compute Projected Density of States (PDOS). This is computationally expensive and disabled by default.')
     # MD stability-specific arguments
     parser.add_argument('--temp', type=float, default=settings["md_temperature"],
                         help=f'Simulation temperature in Kelvin for MD stability analysis (default: {settings["md_temperature"]} K).')

@@ -19,7 +19,12 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+*.tmp
 
 examples/
 get_full_package_context.py
+concat_files.py
+concatenated_project_summary.txt
 vibroml_full_package_context.txt
+ga_recovery.py
+evaluate_all.py
