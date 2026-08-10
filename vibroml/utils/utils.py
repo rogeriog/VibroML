@@ -55,6 +55,16 @@ except ImportError:
     CPUNEP = None
     GPUNEP = None
 
+# Try importing upet (for PET-MAD and other PET universal MLIPs)
+HAVE_UPET = False
+UPETCalculator = None
+
+try:
+    from upet.calculator import UPETCalculator
+    HAVE_UPET = True
+except ImportError:
+    pass
+
 # Check for GPUMD binary
 HAVE_GPUMD = False
 GPUMD_BINARY_PATH = None
@@ -330,6 +340,10 @@ def get_arg_parser_and_settings():
                         help='Include phonon calculations in NEB methods. By default, NEB methods only perform NEB optimization without phonon analysis.')
     parser.add_argument('--compute-pdos', action='store_true', default=False,
                         help='Compute Projected Density of States (PDOS). This is computationally expensive and disabled by default.')
+    parser.add_argument('--phonon-uq', action='store_true', default=False,
+                        help='Compute phonon band structure with uncertainty quantification (UQ) using the LLPR committee ensemble. '
+                             'Requires --engine pet with a UQ-capable model (pet-mad-xs or pet-mad-s v1.5.0) '
+                             'and uqphonon/i-PI installed. Saves ensemble and mean±std band structure plots.')
     # MD stability-specific arguments
     parser.add_argument('--temp', type=float, default=settings["md_temperature"],
                         help=f'Simulation temperature in Kelvin for MD stability analysis (default: {settings["md_temperature"]} K).')

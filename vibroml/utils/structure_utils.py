@@ -17,6 +17,8 @@ from .utils import (
     GPUMD_BINARY_PATH,
     HAVE_CALORINE,
     CPUNEP,
+    HAVE_UPET,
+    UPETCalculator,
 )
 from ase.build import make_supercell
 from ase.io import read, write
@@ -455,7 +457,7 @@ def initialize_calculator(engine, model_name="medium-omat-0", checkpoint_path=No
                 print(f"UMA using device: {device}")
                 
                 predict_unit = load_predict_unit(checkpoint_model_path, device=device)
-                calculator = FAIRChemCalculator(predict_unit=predict_unit, task_name="omc")
+                calculator = FAIRChemCalculator(predict_unit=predict_unit, task_name="omat")
             except Exception as e:
                 sys.exit(f"Failed to initialize UMA calculator: {e}")
         else:
@@ -492,6 +494,31 @@ def initialize_calculator(engine, model_name="medium-omat-0", checkpoint_path=No
             calculator = GPUMDCalculator(GPUMD_BINARY_PATH, nep_model_path)
         except Exception as e:
             sys.exit(f"Failed to initialize GPUMD calculator: {e}")
+    elif engine == "pet":
+        if not HAVE_UPET:
+            sys.exit(
+                "upet not found – install it with `pip install upet` or activate a "
+                "dedicated upet environment (requires metatrain, metatomic-ase, warp-lang)"
+            )
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if checkpoint_model_path is not None:
+            print(f"Initializing PET calculator from local checkpoint: {checkpoint_model_path} on device: {device}...")
+            if not os.path.exists(checkpoint_model_path):
+                sys.exit(f"PET checkpoint not found at {checkpoint_model_path}")
+            try:
+                calculator = UPETCalculator(checkpoint_path=checkpoint_model_path, device=device)
+            except Exception as e:
+                sys.exit(f"Failed to initialize PET calculator from checkpoint: {e}")
+        else:
+            # model_name should be a full model string like "pet-mad-s", "pet-mad-xs",
+            # "pet-omat-s", "pet-omat-l", etc.  Default is "pet-mad-s".
+            pet_model = model_name if model_name != "medium-omat-0" else "pet-mad-s"
+            print(f"Initializing PET calculator with model: {pet_model} on device: {device}...")
+            try:
+                calculator = UPETCalculator(model=pet_model, device=device)
+            except Exception as e:
+                sys.exit(f"Failed to initialize PET calculator with model '{pet_model}': {e}")
     else:
         print(f"Error: Engine '{engine}' not supported yet.")
         return None

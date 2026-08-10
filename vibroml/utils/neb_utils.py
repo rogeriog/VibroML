@@ -7,11 +7,12 @@ from ase.atoms import Atoms
 from ase.io import write
 from ase.optimize import BFGS
 from ase.constraints import FixAtoms
-from ase.build import make_supercell
+from ase.build import make_supercell, sort
 from collections import Counter
 from typing import List, Tuple, Optional, Dict, Any
 import logging
 
+from .plotting_utils import plot_neb_profile
 
 def check_chemical_compatibility(atoms1: Atoms, atoms2: Atoms) -> bool:
     """
@@ -114,191 +115,291 @@ def find_supercell_multipliers(atoms1: Atoms, atoms2: Atoms) -> Tuple[np.ndarray
         transform2 = np.diag([mult2_per_dim, mult2_per_dim, mult2_per_dim])
 
     return transform1, transform2
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cdist
 
+from scipy.optimize import linear_sum_assignment
+from ase.data import atomic_masses, atomic_numbers
+
+from scipy.optimize import linear_sum_assignment
+from ase.data import atomic_masses, atomic_numbers
+
+def pbc_center_of_mass(fractional_positions: np.ndarray, masses: np.ndarray = None) -> np.ndarray:
+    """
+    Calculates the Center of Mass respecting Periodic Boundary Conditions (Circular Mean).
+    Standard np.mean fails if atoms straddle the boundary (e.g., 0.99 and 0.01).
+    """
+    print("Calculating PBC-aware center of mass...")
+    if masses is None:
+        masses = np.ones(len(fractional_positions))
+    
+    total_mass = np.sum(masses)
+    
+    # Map fractional coordinates [0, 1) to angular space [0, 2pi)
+    theta = fractional_positions * 2 * np.pi
+    
+    # Calculate mass-weighted vector sums in complex plane
+    # (equivalent to averaging sin and cos components)
+    xi = np.cos(theta) * masses[:, None]
+    zeta = np.sin(theta) * masses[:, None]
+    
+    mean_xi = np.sum(xi, axis=0) / total_mass
+    mean_zeta = np.sum(zeta, axis=0) / total_mass
+    
+    # Calculate mean angle
+    mean_theta = np.arctan2(mean_zeta, mean_xi)
+    
+    # Map back to fractional space [0, 1)
+    com_frac = mean_theta / (2 * np.pi)
+    
+    # Wrap results to [0, 1)
+    com_frac = np.mod(com_frac, 1.0)
+    
+    return com_frac
+
+def reorder_atoms_to_match(reference_atoms: Atoms, target_atoms: Atoms) -> Atoms:
+    """
+    Reorders target_atoms to minimize displacement relative to reference_atoms.
+    Robust against Global Shifts (using Circular Mean) and Lattice Distortion.
+    """
+    if len(reference_atoms) != len(target_atoms):
+        raise ValueError("Structures must have the same number of atoms to reorder.")
+
+    # 1. Identify Heaviest Species for robust alignment (Scaffold atoms like Pb, I)
+    symbols = reference_atoms.get_chemical_symbols()
+    masses = np.array([atomic_masses[atomic_numbers[s]] for s in symbols])
+    max_mass = np.max(masses)
+    # Use atoms that are at least 50% of the max mass (catches Pb+I, or just Pb)
+    heavy_indices = np.where(masses > 0.5 * max_mass)[0]
+    
+    if len(heavy_indices) == 0:
+        heavy_indices = np.arange(len(masses)) # Fallback to all atoms
+    
+    # 2. Calculate Global Shift using Periodic Center of Mass
+    scaled_ref = reference_atoms.get_scaled_positions()
+    scaled_tgt = target_atoms.get_scaled_positions()
+    
+    com_ref = pbc_center_of_mass(scaled_ref[heavy_indices], masses[heavy_indices])
+    com_tgt = pbc_center_of_mass(scaled_tgt[heavy_indices], masses[heavy_indices])
+    
+    # Calculate shift needed to align Target to Reference
+    global_shift = com_ref - com_tgt
+    global_shift -= np.round(global_shift) # Wrap to simplest shift [-0.5, 0.5]
+    
+    print(f"  Detected global origin shift (Circular Mean): {global_shift}")
+
+    # 3. Apply Global Shift to Target (Temporary for mapping)
+    scaled_tgt_aligned = scaled_tgt + global_shift
+    
+    # 4. Setup Matching Metric using Average Cell
+    # Using Average Cell reduces bias from large lattice distortions
+    ref_cell = reference_atoms.get_cell()
+    tgt_cell = target_atoms.get_cell()
+    avg_cell = 0.5 * (ref_cell + tgt_cell)
+
+    new_indices = np.zeros(len(target_atoms), dtype=int)
+    unique_species = set(symbols)
+
+    for species in unique_species:
+        # Get indices for this species
+        ref_idxs = [i for i, s in enumerate(symbols) if s == species]
+        tgt_idxs = [i for i, s in enumerate(target_atoms.get_chemical_symbols()) if s == species]
+        
+        if len(ref_idxs) != len(tgt_idxs):
+            raise ValueError(f"Species count mismatch for {species}")
+            
+        p_ref = scaled_ref[ref_idxs]
+        p_tgt = scaled_tgt_aligned[tgt_idxs] # Use aligned positions!
+        
+        # Calculate difference vector in fractional space
+        diff_frac = p_tgt[:, None, :] - p_ref[None, :, :]
+        diff_frac -= np.round(diff_frac) # MIC wrap
+        
+        # Convert to Cartesian using Average Cell metric for physical distance
+        diff_cart = np.dot(diff_frac, avg_cell)
+        
+        # Cost matrix: Squared Euclidean distances
+        cost_matrix = np.sum(diff_cart**2, axis=2)
+        
+        # Hungarian Algorithm
+        # row_ind corresponds to index in tgt_idxs, col_ind to ref_idxs
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        
+        # Map: ref_global_index -> tgt_global_index
+        # We need to fill new_indices such that new_indices[ref_idx] = tgt_idx
+        mapping = dict(zip(col_ind, row_ind))
+        
+        for r_sub in range(len(ref_idxs)):
+            t_sub = mapping[r_sub]
+            new_indices[ref_idxs[r_sub]] = tgt_idxs[t_sub]
+
+    # 5. Create final reordered atoms
+    reordered_atoms = target_atoms[new_indices]
+    
+    # 6. Apply the Global Shift Permanently
+    # This moves the final structure to be physically "on top" of the initial one
+    final_positions_frac = reordered_atoms.get_scaled_positions() + global_shift
+    reordered_atoms.set_scaled_positions(final_positions_frac)
+    
+    return reordered_atoms
 
 def make_structures_compatible(initial_atoms: Atoms, final_atoms: Atoms) -> Tuple[Atoms, Atoms]:
     """
-    Make two structures compatible for NEB by creating supercells if needed.
-
-    Args:
-        initial_atoms: Initial structure
-        final_atoms: Final structure
-
-    Returns:
-        Tuple of (compatible_initial, compatible_final) with same number of atoms
+    Make two structures compatible for NEB by creating supercells AND matching atom indices.
     """
     print(f"Checking structure compatibility...")
-    print(f"Initial structure: {len(initial_atoms)} atoms ({Counter(initial_atoms.get_chemical_symbols())})")
-    print(f"Final structure: {len(final_atoms)} atoms ({Counter(final_atoms.get_chemical_symbols())})")
-
-    # If already compatible, return as-is
-    if len(initial_atoms) == len(final_atoms):
-        # Still check chemical compatibility
-        if not check_chemical_compatibility(initial_atoms, final_atoms):
-            raise ValueError("Structures have different chemical compositions and cannot be made compatible")
-        print("✓ Structures already have the same number of atoms")
-        return initial_atoms.copy(), final_atoms.copy()
-
-    # Check chemical compatibility
+    
+    # 1. Check composition and create Supercells if needed
     if not check_chemical_compatibility(initial_atoms, final_atoms):
-        raise ValueError(
-            f"Structures have incompatible chemical compositions:\n"
-            f"Initial: {Counter(initial_atoms.get_chemical_symbols())}\n"
-            f"Final: {Counter(final_atoms.get_chemical_symbols())}\n"
-            f"Cannot create supercells to match atom counts."
-        )
+        raise ValueError(f"Structures have incompatible chemical compositions.")
 
-    print("✓ Structures have compatible chemical compositions")
-
-    # Find supercell multipliers
     try:
         transform1, transform2 = find_supercell_multipliers(initial_atoms, final_atoms)
-
-        print(f"Creating supercells to match atom counts...")
-        print(f"Initial structure supercell transformation: {np.diag(transform1)}")
-        print(f"Final structure supercell transformation: {np.diag(transform2)}")
-
-        # Create supercells
         initial_supercell = make_supercell(initial_atoms, transform1)
         final_supercell = make_supercell(final_atoms, transform2)
-
-        print(f"After supercell creation:")
-        print(f"Initial supercell: {len(initial_supercell)} atoms ({Counter(initial_supercell.get_chemical_symbols())})")
-        print(f"Final supercell: {len(final_supercell)} atoms ({Counter(final_supercell.get_chemical_symbols())})")
-
-        # Verify they now have the same number of atoms
-        if len(initial_supercell) != len(final_supercell):
-            raise ValueError(
-                f"Failed to create compatible supercells. "
-                f"Got {len(initial_supercell)} and {len(final_supercell)} atoms"
-            )
-
-        print("✓ Successfully created compatible supercells")
-        return initial_supercell, final_supercell
-
     except Exception as e:
         raise ValueError(f"Failed to create compatible supercells: {str(e)}")
 
+    print("✓ Successfully created compatible supercells.")
 
+    # 2. Sort the INITIAL structure deterministically (e.g. by tag/Z)
+    # This gives us a stable starting point
+    sorted_initial = sort(initial_supercell)
+    
+    # 3. Reorder the FINAL structure to match the sorted Initial structure spatially
+    # This effectively "maps" the atoms so they don't cross paths
+    print("  Reordering final structure atoms to match initial structure (Hungarian Algorithm)...")
+    matched_final = reorder_atoms_to_match(sorted_initial, final_supercell)
+    
+    return sorted_initial, matched_final
 def linear_interpolate_structures(initial_atoms: Atoms, final_atoms: Atoms, num_images: int) -> List[Atoms]:
     """
-    Create intermediate images by linear interpolation between initial and final structures.
-    Automatically handles structure compatibility by creating supercells if needed.
-
-    Args:
-        initial_atoms: Initial structure (ASE Atoms object)
-        final_atoms: Final structure (ASE Atoms object)
-        num_images: Number of intermediate images (excluding initial and final)
-
-    Returns:
-        List of ASE Atoms objects representing the complete path [initial, image1, ..., imageN, final]
-        Note: If supercells were created, the returned structures will have more atoms than the originals
+    Create intermediate images by linear interpolation of FRACTIONAL coordinates.
+    This prevents atom collisions during large cell shape changes (e.g., cubic -> hexagonal).
     """
-    print(f"Creating {num_images} intermediate images by linear interpolation...")
+    print(f"Creating {num_images} intermediate images via fractional interpolation...")
 
-    # Make structures compatible (handles supercell creation if needed)
-    try:
-        compatible_initial, compatible_final = make_structures_compatible(initial_atoms, final_atoms)
-    except ValueError as e:
-        print(f"Error: {e}")
-        raise
+    # 1. Make structures compatible and mapped
+    compatible_initial, compatible_final = make_structures_compatible(initial_atoms, final_atoms)
 
-    images = []
-
-    # Add initial structure
-    images.append(compatible_initial.copy())
-
-    # Create intermediate images
-    initial_positions = compatible_initial.get_positions()
-    final_positions = compatible_final.get_positions()
+    images = [compatible_initial.copy()]
+    
+    # Get cells
+    initial_cell = compatible_initial.get_cell()
+    final_cell = compatible_final.get_cell()
+    
+    # Get scaled (fractional) positions
+    p1 = compatible_initial.get_scaled_positions()
+    p2 = compatible_final.get_scaled_positions()
+    
+    # Handle PBC wrapping for fractional coordinates
+    # We want the shortest path in fractional space (e.g. 0.9 -> 0.1 should be +0.2, not -0.8)
+    diff = p2 - p1
+    diff -= np.round(diff) # Wrap to [-0.5, 0.5]
+    p2_unwrapped = p1 + diff # p2 relative to p1
     
     for i in range(1, num_images + 1):
-        # Linear interpolation parameter
         alpha = i / (num_images + 1)
         
-        # Interpolate positions
-        interpolated_positions = (1 - alpha) * initial_positions + alpha * final_positions
+        # Interpolate Cell
+        current_cell = (1 - alpha) * initial_cell + alpha * final_cell
         
-        # Create new atoms object
-        image = compatible_initial.copy()
-        image.set_positions(interpolated_positions)
+        # Interpolate Fractional Positions
+        current_frac = (1 - alpha) * p1 + alpha * p2_unwrapped
+        
+        # Create image
+        img = compatible_initial.copy()
+        img.set_cell(current_cell, scale_atoms=False) # Set new box dimensions
+        img.set_scaled_positions(current_frac)        # Set atoms relative to new box
+        
+        images.append(img)
 
-        # Interpolate cell parameters if they differ
-        if not np.allclose(compatible_initial.cell, compatible_final.cell, atol=1e-6):
-            initial_cell = compatible_initial.cell.array
-            final_cell = compatible_final.cell.array
-            interpolated_cell = (1 - alpha) * initial_cell + alpha * final_cell
-            image.set_cell(interpolated_cell, scale_atoms=False)
+    # Final image
+    # We create a fresh copy from compatible_final to ensure exact end-state geometry
+    final_img = compatible_final.copy()
+    images.append(final_img)
 
-        images.append(image)
-
-    # Add final structure
-    images.append(compatible_final.copy())
-    
-    print(f"Created {len(images)} total images (including initial and final)")
     return images
+def get_mic_vector(pos1: np.ndarray, pos2: np.ndarray, cell: np.ndarray, pbc: np.ndarray) -> np.ndarray:
+    """
+    Calculate the vector pointing from pos1 to pos2 adhering to MIC.
+    """
+    diff = pos2 - pos1
+    
+    # If no PBC or cell volume is zero, return direct difference
+    if not np.any(pbc) or np.abs(np.linalg.det(cell)) < 1e-8:
+        return diff
 
+    # Convert to fractional coordinates
+    # We use np.linalg.solve for speed instead of explicit inverse
+    diff_frac = np.linalg.solve(cell.T, diff.T).T
+    
+    # Apply MIC to PBC directions: wrap fractional coordinate diffs to [-0.5, 0.5]
+    if np.all(pbc):
+        diff_frac -= np.round(diff_frac)
+    else:
+        for i, is_periodic in enumerate(pbc):
+            if is_periodic:
+                diff_frac[:, i] -= np.round(diff_frac[:, i])
+                
+    # Convert back to Cartesian
+    return np.dot(diff_frac, cell)
 
 def calculate_tangent(prev_image: Atoms, current_image: Atoms, next_image: Atoms) -> np.ndarray:
     """
-    Calculate the tangent vector for the current image using the improved tangent method.
-    
-    Args:
-        prev_image: Previous image in the path
-        current_image: Current image
-        next_image: Next image in the path
-    
-    Returns:
-        Normalized tangent vector (flattened positions)
+    Calculate the tangent vector for the current image using the improved tangent method
+    with Minimum Image Convention support.
     """
-    # Get positions as flattened arrays
-    prev_pos = prev_image.get_positions().flatten()
-    curr_pos = current_image.get_positions().flatten()
-    next_pos = next_image.get_positions().flatten()
+    # Get standard data
+    prev_pos = prev_image.get_positions()
+    curr_pos = current_image.get_positions()
+    next_pos = next_image.get_positions()
     
-    # Calculate vectors to neighboring images
-    vec_to_next = next_pos - curr_pos
-    vec_to_prev = curr_pos - prev_pos
+    cell = current_image.get_cell()
+    pbc = current_image.get_pbc()
+    
+    # --- FIX START ---
+    # Calculate vectors to neighboring images using MIC
+    # Vectors point FROM prev/curr TO curr/next
+    vec_to_next = get_mic_vector(curr_pos, next_pos, cell, pbc).flatten()
+    vec_to_prev = get_mic_vector(prev_pos, curr_pos, cell, pbc).flatten()
+    # --- FIX END ---
     
     # Use the bisector method for tangent estimation
+    # Note: vec_to_prev here is actually (Current - Prev), so it points forward relative to path
     tangent = vec_to_next + vec_to_prev
     
     # Normalize tangent
     tangent_norm = np.linalg.norm(tangent)
     if tangent_norm < 1e-10:
-        # If tangent is nearly zero, use simple difference
+        # Fallback if tangent is zero
         tangent = vec_to_next - vec_to_prev
         tangent_norm = np.linalg.norm(tangent)
         if tangent_norm < 1e-10:
-            # If still zero, return zero tangent
             return np.zeros_like(tangent)
     
     return tangent / tangent_norm
 
-
 def calculate_spring_force(prev_image: Atoms, current_image: Atoms, next_image: Atoms, 
-                          tangent: np.ndarray, spring_constant: float) -> np.ndarray:
+                           tangent: np.ndarray, spring_constant: float) -> np.ndarray:
     """
-    Calculate the spring force for the current image.
-    
-    Args:
-        prev_image: Previous image in the path
-        current_image: Current image
-        next_image: Next image in the path
-        tangent: Normalized tangent vector
-        spring_constant: Spring constant (eV/Å²)
-    
-    Returns:
-        Spring force vector (flattened)
+    Calculate the spring force for the current image using MIC.
     """
-    # Get positions as flattened arrays
-    prev_pos = prev_image.get_positions().flatten()
-    curr_pos = current_image.get_positions().flatten()
-    next_pos = next_image.get_positions().flatten()
+    prev_pos = prev_image.get_positions()
+    curr_pos = current_image.get_positions()
+    next_pos = next_image.get_positions()
     
-    # Calculate distances to neighboring images
-    dist_to_next = np.linalg.norm(next_pos - curr_pos)
-    dist_to_prev = np.linalg.norm(curr_pos - prev_pos)
+    cell = current_image.get_cell()
+    pbc = current_image.get_pbc()
+    
+    # --- FIX START ---
+    # Calculate distances using MIC vectors
+    vec_next = get_mic_vector(curr_pos, next_pos, cell, pbc)
+    vec_prev = get_mic_vector(prev_pos, curr_pos, cell, pbc) # Points Prev -> Curr
+    
+    dist_to_next = np.linalg.norm(vec_next) # Norm of matrix (uses frobenius, effectively dist between all atoms)
+    dist_to_prev = np.linalg.norm(vec_prev)
+    # --- FIX END ---
     
     # Spring force magnitude (difference in distances)
     spring_force_magnitude = spring_constant * (dist_to_next - dist_to_prev)
@@ -307,7 +408,6 @@ def calculate_spring_force(prev_image: Atoms, current_image: Atoms, next_image: 
     spring_force = spring_force_magnitude * tangent
     
     return spring_force
-
 
 def calculate_force_statistics(images: List[Atoms], calculator) -> Tuple[List[float], List[float]]:
     """
@@ -414,29 +514,45 @@ def calculate_neb_forces(images: List[Atoms], calculator, spring_constant: float
 
 def save_neb_images(images: List[Atoms], output_dir: str, prefix: str, iteration: int = 0):
     """
-    Save all NEB images to files.
+    Save all NEB images to individual files and write the full path animation.
     
     Args:
-        images: List of ASE Atoms objects
+        images: List of ASE Atoms objects [initial, img1, ..., imgN, final]
         output_dir: Output directory
         prefix: Filename prefix
         iteration: Current iteration number
     """
+    # 1. Save individual files (Optional, but good for inspection)
     images_dir = os.path.join(output_dir, f"images_iter_{iteration:04d}")
     os.makedirs(images_dir, exist_ok=True)
     
     for i, image in enumerate(images):
-        # Save as CIF
         cif_filename = f"{prefix}_image_{i:02d}.cif"
-        cif_path = os.path.join(images_dir, cif_filename)
-        write(cif_path, image)
-        
-        # Save as XYZ for visualization
-        xyz_filename = f"{prefix}_image_{i:02d}.xyz"
-        xyz_path = os.path.join(images_dir, xyz_filename)
-        write(xyz_path, image)
+        write(os.path.join(images_dir, cif_filename), image)
+
+    # 2. SAVE THE FULL ANIMATION
+    animation_base = f"{prefix}_animation_iter_{iteration:04d}"
+    xyz_anim_path = os.path.join(output_dir, f"{animation_base}.xyz")
+    traj_anim_path = os.path.join(output_dir, f"{animation_base}.traj")
     
-    print(f"Saved {len(images)} images to {images_dir}")
+    # FIX: Delete existing files to prevent appending (especially for .traj)
+    if os.path.exists(xyz_anim_path):
+        try:
+            os.remove(xyz_anim_path)
+        except OSError:
+            pass
+            
+    if os.path.exists(traj_anim_path):
+        try:
+            os.remove(traj_anim_path)
+        except OSError:
+            pass
+    
+    # Save fresh files
+    write(xyz_anim_path, images)
+    write(traj_anim_path, images)
+    
+    print(f"Saved NEB animation to: {xyz_anim_path}")
 
 
 def check_neb_convergence(neb_forces: List[np.ndarray], force_tolerance: float) -> Tuple[bool, float]:
@@ -580,8 +696,8 @@ def run_neb_optimization(initial_atoms: Atoms, final_atoms: Atoms, calculator,
         update_image_positions(images, neb_forces)
 
         # Save images every 10 iterations or at the end
-        if iteration % 10 == 0 or iteration == max_iterations:
-            save_neb_images(images, output_dir, prefix, iteration)
+        # if iteration % 10 == 0 or iteration == max_iterations:
+        #     save_neb_images(images, output_dir, prefix, iteration)
 
     else:
         print(f"NEB did not converge after {max_iterations} iterations")
@@ -612,7 +728,7 @@ def run_neb_optimization(initial_atoms: Atoms, final_atoms: Atoms, calculator,
 def generate_enhanced_neb_summary(results: Dict[str, Any], method_name: str, args, final_cif_path: str,
                                  neb_params: Dict[str, Any], output_paths: List[str]) -> None:
     """
-    Generate enhanced NEB summary files with energy and force information.
+    Generate enhanced NEB summary files with energy and force information. 
 
     Args:
         results: NEB optimization results dictionary
@@ -640,6 +756,33 @@ def generate_enhanced_neb_summary(results: Dict[str, Any], method_name: str, arg
     else:
         total_forces = [0.0] * len(final_images)
         max_forces = [0.0] * len(final_images)
+
+    try:
+        # Get number of atoms from the first image
+        num_atoms = len(final_images[0])
+        
+        # Extract data for plotting
+        final_energies = results['final_energies']
+        image_indices = list(range(len(final_energies)))
+        
+        # Ensure max_forces list matches energy list length (fill 0.0 if calc missing)
+        if len(max_forces) < len(final_energies):
+            max_forces.extend([0.0] * (len(final_energies) - len(max_forces)))
+
+        # Determine output directory (use the main directory)
+        plot_output_dir = os.path.dirname(output_paths[1])
+        
+        # Generate the plot
+        plot_neb_profile(
+            images=image_indices,
+            energies=final_energies,
+            max_forces=max_forces,
+            num_atoms=num_atoms,
+            output_dir=plot_output_dir,
+            prefix="neb_final"
+        )
+    except Exception as e:
+        print(f"Warning: Could not generate NEB plot: {e}")
 
     # Generate summary content
     summary_content = []

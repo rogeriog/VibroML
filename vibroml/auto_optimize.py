@@ -8,9 +8,10 @@ from .utils.relaxation_utils import relax_structure, relax_structures_in_folder,
 from .utils.phonon_utils import run_single_phonon_analysis
 from .utils.neb_utils import run_neb_optimization, generate_enhanced_neb_summary
 from .utils.md_utils import (prepare_md_supercell, setup_nvt_ensemble, setup_npt_ensemble,
-                            temperature_ramp_callback, monitor_equilibration_convergence,
-                            analyze_trajectory_stability, analyze_energy_trajectory,
-                            determine_stability, save_trajectory_analysis_plots)
+                            temperature_ramp_callback, monitor_equilibration_convergence, calculate_rdf,
+                            analyze_trajectory_stability, analyze_energy_trajectory, compute_averaged_structure,
+                            determine_stability, save_trajectory_analysis_plots, analyze_symmetry_retention )
+
 from .checkpointing import CheckpointManager, should_skip_sample, should_skip_final_analysis
 
 from .utils.genetic_algorithm import GeneticAlgorithm
@@ -1005,8 +1006,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                     f.write(f"*** WARNING: High decomposition rate may limit GA effectiveness ***\n")
                 f.write(f"\n")
 
-                f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25}{'Cell Parameters (a, b, c, α, β, γ)':<60} {'Main Iter':<10} {'GA Gen':<8} {'Sample':<8} {'GA Params':<65}\n")
-                f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*10:<10} {'-'*8:<8} {'-'*8:<8} {'-'*65:<65}\n")
+                f.write(f"{'Num Atoms':<12} {'Int. Symbol':<15} {'Crystal System':<18} {'Energy per Atom (eV/atom)':<25} {'Cell Parameters (a, b, c, α, β, γ)':<60} {'Main Iter':<10} {'GA Gen':<8} {'Sample':<8} {'GA Params':<65}\n")
+                f.write(f"{'-'*12:<12} {'-'*15:<15} {'-'*18:<18} {'-'*25:<25} {'-'*60:<60} {'-'*10:<10} {'-'*8:<8} {'-'*8:<8} {'-'*65:<65}\n")
 
                 # Sort valid_iteration_results by energy_per_atom for this summary
                 if valid_iteration_results:
@@ -1019,6 +1020,11 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                     international_symbol = result.get('international_symbol', 'N/A')
                     crystal_system = result.get('crystal_system', 'N/A')
                     energy = result.get('energy_per_atom', 'FAIL')
+                    
+                    # Extract the cell parameters safely
+                    cp = result.get('cell_params', [0, 0, 0, 0, 0, 0])
+                    cp_str = f"{cp[0]:.2f} {cp[1]:.2f} {cp[2]:.2f} {cp[3]:.1f} {cp[4]:.1f} {cp[5]:.1f}"
+                    
                     params = result.get('params', ('N/A', 'N/A', ('N/A',)*6, 'N/A'))
                     # Format cell_transformation_vector to 3 decimal places
                     if isinstance(params, tuple) and len(params) == 5:  
@@ -1028,8 +1034,11 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                         params_str = f"D1:{params[0]:.3f}, R21:{params[1]:.3f}, Cell:({cell_transform_str}), SC:{sc_str}, PhFactor:{ph_fac}"  
                     else:  
                         params_str = str(params)
+                    
                     energy_str = f"{energy:.6f}" if isinstance(energy, (int, float)) else str(energy)  
-                    f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {str(result.get('main_iteration', 'N/A')):<10} {str(result.get('ga_generation', 'N/A')):<8} {str(result.get('sample', 'N/A')):<8} {params_str:<80}\n")
+                    
+                    # Added cp_str into the output row formatting
+                    f.write(f"{str(num_atoms):<12} {international_symbol:<15} {crystal_system:<18} {energy_str:<25} {cp_str:<60} {str(result.get('main_iteration', 'N/A')):<10} {str(result.get('ga_generation', 'N/A')):<8} {str(result.get('sample', 'N/A')):<8} {params_str:<80}\n")
             
             print(f"Generation results saved to {iteration_summary_filepath}")
             
@@ -4272,7 +4281,6 @@ def run_ci_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_s
 
     print("\n--- CI-NEB Soft Mode Optimization Complete ---")
 
-
 def run_md_stability_analysis(args, base_output_dir, initial_atoms_for_analysis):
     """
     Run AIMD stability analysis using Machine Learning Interatomic Potentials.
@@ -4469,7 +4477,7 @@ def run_md_stability_analysis(args, base_output_dir, initial_atoms_for_analysis)
         # Set up production logger (less frequent logging)
         prod_log_file = os.path.join(md_output_dir, f"{original_prefix}_production_log.txt")
         prod_logger = StressMDLogger(npt_production_dynamics, supercell_atoms, prod_log_file, header=True,
-                                    stress=True, peratom=True, mode="w")
+                                     stress=True, peratom=True, mode="w")
 
         # Attach trajectory writer and logger for production
         npt_production_dynamics.attach(production_traj_writer.write, interval=max(1, production_steps // 1000))  # Save ~1000 frames
@@ -4524,29 +4532,9 @@ def run_md_stability_analysis(args, base_output_dir, initial_atoms_for_analysis)
         traceback.print_exc()
         return
 
-    # --- Step 5: Stability Assessment ---
-    print(f"\n--- Step 5: Stability Assessment ---")
-
-    try:
-        # Determine stability verdict using configurable thresholds
-        stability_verdict = determine_stability(
-            stability_results,
-            rmsd_threshold=args.rmsd_threshold,
-            volume_threshold=args.volume_threshold,
-            rdf_threshold=args.rdf_threshold
-        )
-
-        print(f"Stability analysis completed")
-        print(f"Verdict: {stability_verdict['verdict']} (confidence: {stability_verdict['confidence']})")
-
-    except Exception as e:
-        print(f"Error during stability assessment: {e}")
-        import traceback
-        traceback.print_exc()
-        return
-
-    # --- Step 6: Generate Output Files ---
-    print(f"\n--- Step 6: Generating Output Files ---")
+    # --- Step 5: Generate Output Files ---
+    # Moved Step 6 here (before Stability Assessment) so we have the averaged structure available
+    print(f"\n--- Step 5: Generating Output Files & Averaging Structure ---")
 
     try:
         # Generate analysis plots
@@ -4569,17 +4557,82 @@ def run_md_stability_analysis(args, base_output_dir, initial_atoms_for_analysis)
         write(xyz_trajectory_path, final_production_trajectory)
         print(f"XYZ trajectory saved to: {xyz_trajectory_path}")
 
-        # Save trajectory in XYZ format for visualization
-        xyz_trajectory_path = os.path.join(md_output_dir, f"{original_prefix}_trajectory.xyz")
-        # Save every 10th frame to reduce file size
-        xyz_frames = final_trajectory[::max(1, len(final_trajectory)//100)]
-        write(xyz_trajectory_path, xyz_frames)
-        print(f"Trajectory (XYZ format) saved to: {xyz_trajectory_path}")
+        # Save trajectory in XYZ format for visualization (decimated)
+        # FIX: Replaced 'final_trajectory' (which was undefined) with 'final_production_trajectory'
+        xyz_trajectory_path_full = os.path.join(md_output_dir, f"{original_prefix}_trajectory.xyz")
+        xyz_frames = final_production_trajectory[::max(1, len(final_production_trajectory)//100)]
+        write(xyz_trajectory_path_full, xyz_frames)
+        print(f"Trajectory (XYZ format) saved to: {xyz_trajectory_path_full}")
+
+        # --- Compute Averaged Structure ---
+        # This is for robust Symmetry and RDF analysis
+        print("\nComputing thermally-averaged structure for robust analysis...")
+        averaged_structure = compute_averaged_structure(production_trajectory_file, n_frames=100)
+        
+        structure_to_analyze = final_structure # Default fallback
+        if averaged_structure:
+            avg_struct_path = os.path.join(md_output_dir, f"{original_prefix}_averaged_structure.cif")
+            write(avg_struct_path, averaged_structure)
+            print(f"Averaged structure saved to: {avg_struct_path}")
+            structure_to_analyze = averaged_structure
+            print("Using thermally-averaged structure for Symmetry and RDF checks (High Precision).")
+        else:
+            print("Warning: Averaging failed, falling back to final snapshot for checks (Low Precision).")
 
     except Exception as e:
         print(f"Error generating output files: {e}")
         import traceback
         traceback.print_exc()
+        # Ensure we have a valid structure_to_analyze even if averaging fails
+        if 'final_structure' in locals():
+             structure_to_analyze = final_structure
+        else:
+             print("Critical error: No final structure available for stability assessment.")
+             return
+
+    # --- Step 6: Stability Assessment ---
+    print(f"\n--- Step 6: Stability Assessment ---")
+
+    try:
+        # Run Symmetry Analysis (on averaged structure)
+        symmetry_results = analyze_symmetry_retention(
+            initial_atoms_for_analysis, 
+            structure_to_analyze,
+            md_output_dir,     
+            original_prefix 
+        )
+        print("Recalculating RDF using the thermally-averaged structure...")
+        # Get initial RDF (starting phase)
+        _, initial_rdf_profile = calculate_rdf(initial_atoms_for_analysis)
+        
+        # Get averaged structure RDF
+        _, final_clean_rdf_profile = calculate_rdf(structure_to_analyze)
+        
+        # Compute new correlation
+        clean_rdf_correlation = np.corrcoef(initial_rdf_profile, final_clean_rdf_profile)[0, 1]
+        print(f"RDF correlation (averaged structure): {clean_rdf_correlation:.4f}")
+        # Overwrite the metric in stability_results so determine_stability uses the new value
+        print(f"  Trajectory Average RDF Correlation: {stability_results['rdf_correlation']:.4f}")
+        print(f"  Averaged Structure RDF Correlation: {clean_rdf_correlation:.4f} (Used for verdict)")
+        stability_results['rdf_correlation'] = clean_rdf_correlation
+
+        # Determine stability verdict using configurable thresholds
+        stability_verdict = determine_stability(
+            stability_results,
+            rmsd_threshold=args.rmsd_threshold,
+            volume_threshold=args.volume_threshold,
+            rdf_threshold=args.rdf_threshold,
+            symmetry_results=symmetry_results
+        )
+
+        print(f"Stability analysis completed")
+        print(f"Verdict: {stability_verdict['verdict']} (confidence: {stability_verdict['confidence']})")
+
+    except Exception as e:
+        print(f"Error during stability assessment: {e}")
+        import traceback
+        traceback.print_exc()
+        return
 
     # --- Step 7: Generate Comprehensive Report ---
     print(f"\n--- Step 7: Generating Comprehensive Report ---")
@@ -4605,7 +4658,10 @@ def run_md_stability_analysis(args, base_output_dir, initial_atoms_for_analysis)
             f.write(f"Stability Verdict: {stability_verdict['verdict']}\n")
             f.write(f"Confidence Level: {stability_verdict['confidence']}\n")
             f.write("\n")
-
+            if symmetry_results:
+                sym_verdict = "RETAINED" if symmetry_results.get('symmetry_stable') else "BROKEN"
+                f.write(f"Symmetry Retention: {sym_verdict}\n")
+            f.write("\n")
             # Simulation Parameters
             f.write("SIMULATION PARAMETERS\n")
             f.write("-" * 40 + "\n")
@@ -4654,6 +4710,27 @@ def run_md_stability_analysis(args, base_output_dir, initial_atoms_for_analysis)
             f.write(f"  Initial vs final correlation: {stability_results['rdf_correlation']:.3f}\n")
             f.write(f"\n")
 
+            if symmetry_results:
+                f.write("SYMMETRY RETENTION DETAILS\n")
+                f.write("-" * 40 + "\n")
+                f.write(f"Initial Space Group: {symmetry_results.get('initial_sg_symbol')} ({symmetry_results.get('initial_sg_number')})\n\n")
+                
+                header = f"{'Tolerance (Å)':<15} {'Final SG Symbol':<20} {'Number':<10} {'Match'}\n"
+                f.write(header)
+                f.write("-" * 60 + "\n")
+                
+                for match in symmetry_results.get('matches', []):
+                    m_str = "YES" if match.get('match') else "NO"
+                    # Handle cases where a specific tolerance check might have failed
+                    if 'error' in match:
+                        f.write(f"{match['tolerance']:<15.2f} {'FAILED':<20} {'-':<10} -\n")
+                    else:
+                        f.write(f"{match['tolerance']:<15.2f} {match['symbol']:<20} {match.get('number', '-'):<10} {m_str}\n")
+                
+                f.write("\nVerdict Logic: Symmetry is considered RETAINED if the initial space group\n")
+                f.write("is detected at ANY of the tested tolerances on the averaged structure.\n")
+                f.write("\n")
+                
             if energy_results.get('has_energy_data', False):
                 f.write(f"Energy Analysis:\n")
                 f.write(f"  Mean energy: {energy_results['energy_mean']:.6f} eV/atom\n")

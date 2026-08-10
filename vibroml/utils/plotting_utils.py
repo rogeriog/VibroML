@@ -1,6 +1,59 @@
 import matplotlib.pyplot as plt
-import os
 import numpy as np
+import os
+
+def plot_neb_profile(images, energies, max_forces, num_atoms, output_dir, prefix="neb"):
+    """
+    Generates and saves the NEB Energy and Force profile plot.
+    
+    Args:
+        images (list/array): Image indices.
+        energies (list/array): Raw potential energies in eV.
+        max_forces (list/array): Maximum forces in eV/Angstrom.
+        num_atoms (int): Number of atoms for normalization.
+        output_dir (str): Directory to save the plot.
+        prefix (str): Prefix for the filename (default: "neb").
+    """
+    # Normalize energies relative to the minimum energy, per atom
+    energies = np.array(energies)
+    min_energy = np.min(energies)
+    rel_energies = (energies - min_energy) / num_atoms
+    
+    max_forces = np.array(max_forces)
+    
+    # Setup plot
+    plt.rc("figure", dpi=150)
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    
+    # Plot Relative Energy (Left Axis)
+    color_energy = 'tab:blue'
+    ax1.set_xlabel('Image Index', fontsize=12)
+    ax1.set_ylabel('Relative Energy (eV/atom)', color=color_energy, fontsize=12)
+    ax1.plot(images, rel_energies, marker='o', color=color_energy, linewidth=2, label='Relative Energy')
+    ax1.tick_params(axis='y', labelcolor=color_energy)
+    ax1.grid(True, axis='x', linestyle='--', alpha=0.5)
+    
+    # Plot Max Force (Right Axis)
+    ax2 = ax1.twinx()
+    color_force = 'tab:red'
+    ax2.set_ylabel('Max Force (eV/Å)', color=color_force, fontsize=12)
+    ax2.plot(images, max_forces, marker='s', color=color_force, linewidth=1.5, linestyle='--', label='Max Force')
+    ax2.tick_params(axis='y', labelcolor=color_force)
+    
+    # Add stability threshold line for reference (0.05 eV/A is standard)
+    ax2.axhline(y=0.05, color=color_force, linestyle=':', alpha=0.5, label='Convergence Target')
+    
+    # Title and Layout
+    plt.title(f'NEB Energy and Force Profile (N={num_atoms} atoms)', fontsize=14, y=1.02)
+    fig.tight_layout()
+    
+    # Save
+    plot_filename = f"{prefix}_profile.png"
+    save_path = os.path.join(output_dir, plot_filename)
+    plt.savefig(save_path, dpi=300)
+    plt.close(fig)
+    
+    print(f"NEB profile plot saved to: {save_path}")
 
 def plot_phonon_results(
    bs_energies,

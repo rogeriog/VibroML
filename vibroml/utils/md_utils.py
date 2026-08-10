@@ -22,6 +22,10 @@ from ase.md.langevin import Langevin
 from ase import units
 from ase.build import make_supercell
 from ase.md.logger import MDLogger
+
+from pymatgen.io.ase import AseAtomsAdaptor
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+
 import json
 
 
@@ -115,6 +119,28 @@ class StressMDLogger:
         if hasattr(self, 'fd') and self.fd is not None:
             self.fd.close()
 
+def standardize_cell_for_npt(atoms: Atoms):
+    """
+    Forces the atoms' cell into a lower-triangular matrix required by ASE NPT.
+    Rotates the system (cell + atoms) so the cell vectors are aligned with XYZ.
+    """
+    from ase.geometry import cell_to_cellpar, cellpar_to_cell
+    
+    # 1. Get the current physical dimensions (lengths and angles)
+    cellpar = atoms.get_cell().cellpar()
+    
+    # 2. Generate the standard lower-triangular matrix for these dimensions
+    new_cell = cellpar_to_cell(cellpar)
+    
+    # 3. Apply the new cell. 
+    # CRITICAL: scale_atoms=True ensures atoms rotate WITH the cell, 
+    # preserving the crystal structure.
+    atoms.set_cell(new_cell, scale_atoms=True)
+    
+    # 4. Wrap positions to ensure they are inside the new box boundaries
+    atoms.wrap()
+    
+    return atoms
 
 def parse_supercell_size(supercell_size_str: str) -> Tuple[int, int, int]:
     """
@@ -168,46 +194,37 @@ def prepare_md_supercell(primitive_atoms: Atoms, supercell_size: str) -> Atoms:
     print(f"Supercell created with {num_atoms} atoms")
     return supercell_atoms
 
-
 def setup_nvt_ensemble(atoms: Atoms, temperature: float, calculator,
-                      timestep: float = 1.0):
+                       timestep: float = 1.0):
     """
     Set up NVT ensemble for temperature equilibration phase.
-
-    Args:
-        atoms: Atoms object for simulation
-        temperature: Target temperature in Kelvin
-        calculator: ASE calculator (MLIP)
-        timestep: MD timestep in fs (default: 1.0 fs)
-
-    Returns:
-        NVT dynamics object
     """
     from ase.md.nvtberendsen import NVTBerendsen
+    from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary
 
     print(f"Setting up NVT ensemble for temperature equilibration:")
-    print(f"  Target temperature: {temperature} K")
-    print(f"  Timestep: {timestep} fs")
-    print(f"  Starting from 0K (zero velocities)")
-
+    
     # Attach calculator
     atoms.calc = calculator
 
-    # Initialize with zero velocities (0K start)
-    atoms.set_velocities(np.zeros_like(atoms.get_positions()))
+    # FIX: Initialize with a small non-zero temperature (e.g., 10 K)
+    # This prevents T=0 divide-by-zero errors and ensures the thermostat has
+    # velocities to scale up.
+    print("  Initializing velocities to 10 K to seed the thermostat...")
+    MaxwellBoltzmannDistribution(atoms, temperature_K=10.0)
+    Stationary(atoms) # Ensure zero total momentum
 
-    # Set up NVT ensemble with Berendsen thermostat
-    # Start with low temperature that will be ramped up
+    # Set up NVT ensemble
     dynamics = NVTBerendsen(
         atoms,
         timestep=timestep * units.fs,
-        temperature_K=1.0,  # Start very low, will be ramped
-        taut=50.0 * units.fs  # Thermostat time constant
+        temperature_K=1.0,  # Start ramp target low
+        taut=50.0 * units.fs
     )
 
     return dynamics
 
-
+    
 def setup_npt_ensemble(atoms: Atoms, temperature: float, pressure: float,
                       calculator, timestep: float = 1.0) -> NPT:
     """
@@ -223,6 +240,9 @@ def setup_npt_ensemble(atoms: Atoms, temperature: float, pressure: float,
     Returns:
         NPT dynamics object
     """
+    print("Standardizing the cell for NPT run...")
+    standardize_cell_for_npt(atoms)
+
     print(f"Setting up NPT ensemble for pressure/volume equilibration:")
     print(f"  Temperature: {temperature} K")
     print(f"  Pressure: {pressure} GPa")
@@ -268,6 +288,128 @@ def temperature_ramp_callback(dynamics, target_temp: float, current_step: int, r
             progress = 100.0 * current_step / ramp_steps
             print(f"  Temperature ramp progress: {progress:.1f}% (T = {current_temp:.1f} K)")
 
+def analyze_symmetry_retention(initial_atoms: Atoms, final_atoms: Atoms, 
+                             output_dir: str, prefix: str,
+                             tolerances: List[float] = None) -> Dict[str, Any]:
+    """
+    Check if the space group of the initial structure is recovered in the final 
+    structure under various symmetry tolerances. Saves results to a text file.
+
+    Args:
+        initial_atoms: The starting structure.
+        final_atoms: The final structure (or averaged structure) after MD.
+        output_dir: Directory to save the report.
+        prefix: Filename prefix.
+        tolerances: List of tolerances (Angstroms) to check. 
+                    Default: [0.01, 0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0]
+
+    Returns:
+        Dict containing initial symmetry, matches found, and boolean verdict.
+    """
+    print("\n--- Analyzing Symmetry Retention ---")
+    
+    if tolerances is None:
+        tolerances = [0.01, 0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0]
+
+    # Buffer lines for the text report
+    lines = []
+    lines.append("--- Symmetry Retention Analysis Report ---")
+    lines.append(f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("-" * 50)
+
+    # Convert ASE Atoms to Pymatgen Structures
+    try:
+        adapter = AseAtomsAdaptor()
+        pmg_initial = adapter.get_structure(initial_atoms)
+        pmg_final = adapter.get_structure(final_atoms)
+    except Exception as e:
+        error_msg = f"Error converting structures for symmetry analysis: {e}"
+        print(error_msg)
+        lines.append(error_msg)
+        _write_symmetry_report(lines, output_dir, prefix)
+        return {'symmetry_stable': False, 'error': str(e)}
+
+    # 1. Get Initial Space Group (using tight tolerance for ground truth)
+    try:
+        ref_tol = 0.01
+        init_analyzer = SpacegroupAnalyzer(pmg_initial, symprec=ref_tol)
+        init_sg_symbol = init_analyzer.get_space_group_symbol()
+        init_sg_number = init_analyzer.get_space_group_number()
+        
+        info_str = f"Initial Structure Space Group (tol={ref_tol}): {init_sg_symbol} ({init_sg_number})"
+        print(info_str)
+        lines.append(info_str)
+        lines.append("")
+    except Exception as e:
+        error_msg = f"Could not determine initial space group: {e}"
+        print(error_msg)
+        lines.append(error_msg)
+        _write_symmetry_report(lines, output_dir, prefix)
+        return {'symmetry_stable': False, 'error': 'Initial symmetry check failed'}
+
+    # 2. Sweep tolerances on Final Structure
+    matches = []
+    header = f"{'Tolerance (Å)':<15} {'Final SG Symbol':<20} {'Number':<10} {'Match'}"
+    divider = "-" * 60
+    
+    print(header)
+    print(divider)
+    lines.append(header)
+    lines.append(divider)
+
+    for tol in tolerances:
+        try:
+            analyzer = SpacegroupAnalyzer(pmg_final, symprec=tol)
+            final_sg_symbol = analyzer.get_space_group_symbol()
+            final_sg_number = analyzer.get_space_group_number()
+            
+            is_match = (final_sg_number == init_sg_number)
+            
+            matches.append({
+                'tolerance': tol,
+                'symbol': final_sg_symbol,
+                'number': final_sg_number,
+                'match': is_match
+            })
+            
+            match_str = "YES" if is_match else "NO"
+            row_str = f"{tol:<15.2f} {final_sg_symbol:<20} {final_sg_number:<10} {match_str}"
+            
+            print(row_str)
+            lines.append(row_str)
+            
+        except Exception:
+            matches.append({'tolerance': tol, 'error': 'Failed'})
+            lines.append(f"{tol:<15.2f} {'FAILED':<20} {'-':<10} -")
+
+    # 3. Determine Verdict
+    symmetry_retained = any(m.get('match', False) for m in matches)
+    
+    verdict_str = "\nVerdict: " + ("SYMMETRY RETAINED" if symmetry_retained else "SYMMETRY BROKEN")
+    print(verdict_str)
+    lines.append(verdict_str)
+    
+    # Save the file
+    _write_symmetry_report(lines, output_dir, prefix)
+
+    return {
+        'symmetry_stable': symmetry_retained,
+        'initial_sg_symbol': init_sg_symbol,
+        'initial_sg_number': init_sg_number,
+        'matches': matches
+    }
+
+def _write_symmetry_report(lines, output_dir, prefix):
+    """Helper to write the symmetry lines to a file."""
+    try:
+        filename = f"{prefix}_symmetry_retention_report.txt"
+        path = os.path.join(output_dir, filename)
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines))
+        print(f"Symmetry report saved to: {path}")
+    except Exception as e:
+        print(f"Warning: Failed to save symmetry report: {e}")
+        
 
 def monitor_equilibration_convergence(trajectory_file: str, start_step: int,
                                     window_size: int = 100) -> dict:
@@ -367,6 +509,79 @@ def monitor_equilibration_convergence(trajectory_file: str, start_step: int,
     except Exception as e:
         return {'converged': False, 'reason': f'Error in convergence check: {e}'}
 
+def compute_averaged_structure(trajectory_file: str, n_frames: int = 50) -> Optional[Atoms]:
+    """
+    Computes the average structure from the last N frames of a trajectory.
+    
+    Effectively filters out thermal noise to recover the equilibrium lattice positions.
+    Handles PBC unwrapping to ensure correct averaging near boundaries.
+
+    Args:
+        trajectory_file: Path to the trajectory file.
+        n_frames: Number of frames from the end to average.
+
+    Returns:
+        Atoms object with averaged positions and cell, or None if failed.
+    """
+    print(f"Computing average structure from last {n_frames} frames...")
+    try:
+        traj = read(trajectory_file, index=f'-{n_frames}:')
+        if len(traj) < 1:
+            print("Warning: Trajectory empty, cannot average.")
+            return None
+        
+        # Use the first frame in the window as the reference for unwrapping
+        ref_atoms = traj[0]
+        ref_pos = ref_atoms.get_positions()
+        ref_cell = ref_atoms.get_cell()
+        pbc = ref_atoms.get_pbc()
+
+        sum_pos = np.zeros_like(ref_pos)
+        sum_cell = np.zeros_like(ref_cell)
+        count = 0
+
+        for atoms in traj:
+            # 1. Average Cell
+            sum_cell += atoms.get_cell()
+            
+            # 2. Average Positions (Unwrapped)
+            # We calculate the displacement from the reference frame
+            current_pos = atoms.get_positions()
+            
+            # Find the minimum image displacement relative to reference
+            # This accounts for atoms crossing PBCs during the sampling window
+            diff = current_pos - ref_pos
+            # Convert to fractional to handle non-orthogonal cells
+            scaled_diff = np.linalg.solve(ref_cell.T, diff.T).T
+            # Wrap fractional differences to [-0.5, 0.5]
+            scaled_diff -= np.round(scaled_diff)
+            # Convert back to Cartesian
+            unwrapped_diff = np.dot(scaled_diff, ref_cell)
+            
+            # Reconstruct unwrapped position: ref + displacement
+            unwrapped_pos = ref_pos + unwrapped_diff
+            
+            sum_pos += unwrapped_pos
+            count += 1
+
+        # Compute averages
+        avg_cell = sum_cell / count
+        avg_pos = sum_pos / count
+
+        # Create new atoms object
+        avg_structure = ref_atoms.copy()
+        avg_structure.set_cell(avg_cell)
+        avg_structure.set_positions(avg_pos)
+        
+        # Determine the chemical formula for logging
+        print(f"  Averaged {count} frames. Formula: {avg_structure.get_chemical_formula()}")
+        return avg_structure
+
+    except Exception as e:
+        print(f"Error computing average structure: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def calculate_rmsd(positions1: np.ndarray, positions2: np.ndarray,
                   cell1: np.ndarray, cell2: np.ndarray) -> float:
@@ -705,25 +920,23 @@ def analyze_energy_trajectory(trajectory_file: str) -> Dict[str, Any]:
 
     return results
 
-
 def determine_stability(analysis_results: Dict[str, Any],
-                       rmsd_threshold: float = 1.0,
-                       volume_threshold: float = 6.0,
-                       rdf_threshold: float = 0.5) -> Dict[str, Any]:
+                        rmsd_threshold: float = 1.0,
+                        volume_threshold: float = 6.0,
+                        rdf_threshold: float = 0.5,
+                        symmetry_results: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Determine crystal stability based on analysis results.
-
-    Uses generous thresholds that account for inherent fluctuations in
-    Machine Learning Interatomic Potentials (MLIPs).
+    Determine crystal stability based on analysis results, including optional symmetry check.
 
     Args:
-        analysis_results: Results from analyze_trajectory_stability
-        rmsd_threshold: RMSD threshold for stability (Angstroms, default: 1.0)
-        volume_threshold: Volume fluctuation threshold for stability (%, default: 4.0)
-        rdf_threshold: RDF correlation threshold for stability (default: 0.5)
+        analysis_results: Results from analyze_trajectory_stability.
+        rmsd_threshold: RMSD threshold.
+        volume_threshold: Volume fluctuation threshold.
+        rdf_threshold: RDF correlation threshold.
+        symmetry_results: (Optional) Output from analyze_symmetry_retention.
 
     Returns:
-        Dictionary with stability verdict and reasoning
+        Dictionary with stability verdict and reasoning.
     """
     print("\n--- Determining Crystal Stability ---")
 
@@ -735,33 +948,58 @@ def determine_stability(analysis_results: Dict[str, Any],
 
     # Stability criteria
     criteria = {
-        'rmsd_stable': rmsd_mean < rmsd_threshold and rmsd_trend < 0.01,  # Low RMSD and no growth
+        'rmsd_stable': rmsd_mean < rmsd_threshold and rmsd_trend < 0.01,
         'volume_stable': volume_max_change < volume_threshold,
         'rdf_stable': rdf_correlation > rdf_threshold
     }
 
+    # Add Symmetry Criterion if available
+    if symmetry_results:
+        criteria['symmetry_stable'] = symmetry_results.get('symmetry_stable', False)
+
     # Count passed criteria
     passed_criteria = sum(criteria.values())
+    total_criteria = len(criteria)
 
-    # Determine overall stability
-    if passed_criteria >= 3:
-        verdict = "STABLE"
-        confidence = "HIGH"
-    elif passed_criteria == 2:
-        verdict = "STABLE"
-        confidence = "MODERATE"
-    elif passed_criteria == 1:
-        verdict = "UNSTABLE"
-        confidence = "LOW"
+    # Determine overall stability (Updated logic for 4 criteria)
+    if total_criteria == 4:
+        if passed_criteria == 4:
+            verdict = "STABLE"
+            confidence = "HIGH"
+        elif passed_criteria == 3:
+            verdict = "STABLE"
+            confidence = "MODERATE"
+        elif passed_criteria == 2:
+            verdict = "UNSTABLE"
+            confidence = "LOW" # Borderline / Phase Transition?
+        else:
+            verdict = "UNSTABLE"
+            confidence = "HIGH"
     else:
-        verdict = "UNSTABLE"
-        confidence = "HIGH"
+        # Fallback to original 3-criteria logic
+        if passed_criteria >= 3:
+            verdict = "STABLE"
+            confidence = "HIGH"
+        elif passed_criteria == 2:
+            verdict = "STABLE"
+            confidence = "MODERATE"
+        elif passed_criteria == 1:
+            verdict = "UNSTABLE"
+            confidence = "LOW"
+        else:
+            verdict = "UNSTABLE"
+            confidence = "HIGH"
 
     # Generate reasoning
     reasoning = []
     reasoning.append(f"RMSD: {rmsd_mean:.3f} Å (threshold: {rmsd_threshold} Å) - {'PASS' if criteria['rmsd_stable'] else 'FAIL'}")
     reasoning.append(f"Volume change: {volume_max_change:.1f}% (threshold: {volume_threshold}%) - {'PASS' if criteria['volume_stable'] else 'FAIL'}")
     reasoning.append(f"RDF correlation: {rdf_correlation:.3f} (threshold: {rdf_threshold}) - {'PASS' if criteria['rdf_stable'] else 'FAIL'}")
+    
+    if symmetry_results:
+        sym_status = "PASS" if criteria['symmetry_stable'] else "FAIL"
+        init_sg = symmetry_results.get('initial_sg_symbol', 'Unknown')
+        reasoning.append(f"Symmetry Retention ({init_sg}): {sym_status} (Matches found in tolerance sweep)")
 
     print(f"Stability verdict: {verdict} (confidence: {confidence})")
     for reason in reasoning:
@@ -776,12 +1014,12 @@ def determine_stability(analysis_results: Dict[str, Any],
             'rmsd_mean': rmsd_mean,
             'rmsd_trend': rmsd_trend,
             'volume_max_change': volume_max_change,
-            'rdf_correlation': rdf_correlation
+            'rdf_correlation': rdf_correlation,
+            'symmetry_stable': criteria.get('symmetry_stable', None)
         }
     }
-
+    
     return results
-
 
 def save_trajectory_analysis_plots(analysis_results: Dict[str, Any],
                                  energy_results: Dict[str, Any],

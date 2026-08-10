@@ -486,7 +486,7 @@ def relax_structure(atoms, calculator, engine, fmax, output_dir, original_cif_pa
     relax_traj_path = os.path.join(output_dir, "relax.traj")
 
     try:
-        if engine in ("mace", "nep", "calorine"):
+        if engine in ("mace", "nep", "calorine", "pet"):
             # Generic ASE-based relaxation using BFGS + UnitCellFilter.
             # Originally tuned for MACE, but equally applicable to other
             # ASE-compatible MLIPs such as calorine NEP.

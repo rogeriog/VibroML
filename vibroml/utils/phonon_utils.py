@@ -456,6 +456,242 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
    return softest_modes_info_list, bsmin, time_taken, tracked_k_points_data
 
 
+def run_phonon_analysis_with_uq(
+    atoms,
+    engine,
+    model_name,
+    units,
+    supercell_dims,
+    delta,
+    fmax,
+    output_dir,
+    prefix="phonon_run",
+    phonon_path_npoints=100,
+    uq_plot_modes=("ensemble", "mean+std"),
+):
+    """
+    Compute phonon band structure with uncertainty quantification (UQ) using
+    uqphonon + i-PI with the LLPR committee ensemble embedded in PET-MAD models.
+
+    Only available with ``--engine pet`` and UQ-capable models (pet-mad-xs v1.5.0
+    and pet-mad-s v1.5.0).  The function saves one PNG per requested plot mode and
+    a plain-text UQ summary, then returns a tuple compatible with
+    :func:`run_single_phonon_analysis`.
+
+    Parameters
+    ----------
+    atoms : ase.Atoms
+        Pre-relaxed structure (primitive cell recommended).
+    engine : str
+        Must be ``"pet"`` — raises a warning and returns ``None`` otherwise.
+    model_name : str
+        PET model string, e.g. ``"pet-mad-xs"`` or ``"pet-mad-s"``.
+    units : str
+        Frequency units: ``"THz"`` (default), ``"cm-1"``, or ``"eV"``.
+        The plot always uses ``"THz"`` or ``"cm-1"``; ``"eV"`` falls back to ``"THz"``.
+    supercell_dims : int, str, or tuple
+        Supercell dimensions accepted by :func:`parse_supercell_dimensions`.
+    delta : float
+        Displacement amplitude for finite differences (Å).
+    fmax : float
+        Force convergence threshold used during relaxation (logged only).
+    output_dir : str
+        Directory where plots and the summary file are written.
+    prefix : str
+        Filename prefix for output files.
+    phonon_path_npoints : int
+        Number of q-points per path segment.
+    uq_plot_modes : iterable of str
+        Plot modes to generate — any subset of ``("ensemble", "mean+std", "spectral")``.
+
+    Returns
+    -------
+    tuple : (softest_modes_info_list, bsmin, time_taken, tracked_k_points_data)
+        Compatible with :func:`run_single_phonon_analysis`.
+        ``softest_modes_info_list`` and ``tracked_k_points_data`` are always empty
+        (soft-mode analysis is not performed in UQ mode).
+    """
+    import time
+    import tempfile
+
+    start_time = time.time()
+    os.makedirs(output_dir, exist_ok=True)
+
+    if engine != "pet":
+        print(
+            f"Warning: --phonon-uq is only supported with --engine pet, not '{engine}'. "
+            "Skipping UQ calculation."
+        )
+        return None
+
+    # ── imports (guarded so VibroML still loads when packages absent) ──────────
+    try:
+        import upet
+        from upet._version import UPET_UQ_SUPPORTED_MODELS
+    except ImportError as exc:
+        print(f"Error: upet is not installed – cannot run phonon UQ ({exc})")
+        return None
+
+    try:
+        from uqphonon import PhononEnsemble
+    except ImportError as exc:
+        print(
+            f"Error: uqphonon is not installed – cannot run phonon UQ ({exc})\n"
+            "Install with: pip install git+https://github.com/ppegolo/uqphonon.git@v0.1.0"
+        )
+        return None
+
+    try:
+        from uqphonon._plot import plot_bands as _uq_plot_bands
+    except ImportError as exc:
+        print(f"Error: uqphonon plotting unavailable ({exc})")
+        return None
+
+    # ── parse model name into base + size ──────────────────────────────────────
+    # e.g. "pet-mad-xs" → ("pet-mad", "xs");  "pet-omat-s" → ("pet-omat", "s")
+    if "-" not in model_name:
+        print(f"Error: Cannot parse model_name '{model_name}' into base+size for UQ.")
+        return None
+    model_base, model_size = model_name.rsplit("-", 1)
+
+    # ── check UQ support ───────────────────────────────────────────────────────
+    # UPET_UQ_SUPPORTED_MODELS entries look like "pet-mad-xs-v1.5.0"
+    uq_base_names = set()
+    for m in UPET_UQ_SUPPORTED_MODELS:
+        parts = m.rsplit("-v", 1)
+        if len(parts) == 2:
+            uq_base_names.add(parts[0])  # e.g. "pet-mad-xs"
+    if model_name not in uq_base_names:
+        print(
+            f"Warning: '{model_name}' may not support UQ ensemble predictions.\n"
+            f"  UQ-capable models: {sorted(uq_base_names)}\n"
+            "  Continuing – i-PI run may fail or return single-member output."
+        )
+
+    # ── export TorchScript model ───────────────────────────────────────────────
+    model_pt = os.path.join(output_dir, f"{model_base.replace('-','_')}_{model_size}.pt")
+    if not os.path.exists(model_pt):
+        print(f"\n--- Exporting PET model to TorchScript: {model_pt} ---")
+        try:
+            upet.save_upet(model=model_base, size=model_size, output=model_pt)
+        except Exception as exc:
+            print(f"Error exporting model: {exc}")
+            return None
+    else:
+        print(f"   Reusing cached TorchScript model: {model_pt}")
+
+    # ── device ────────────────────────────────────────────────────────────────
+    try:
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        device = "cpu"
+
+    # ── supercell matrix ──────────────────────────────────────────────────────
+    from .utils import parse_supercell_dimensions
+    sc = parse_supercell_dimensions(supercell_dims)
+    supercell_matrix = np.diag(sc)
+
+    # ── run PhononEnsemble ────────────────────────────────────────────────────
+    print(f"\n--- Running PhononEnsemble UQ: {atoms.get_chemical_formula()} ---")
+    print(f"   Model: {model_name}  Supercell: {sc}  Delta: {delta} Å  Device: {device}")
+
+    ensemble = PhononEnsemble(
+        atoms=atoms,
+        supercell_matrix=supercell_matrix,
+        model=model_pt,
+        device=device,
+        primitive_matrix=np.eye(3),
+    )
+    ensemble.compute_displacements(distance=delta)
+
+    workdir = os.path.join(output_dir, f"_uqphonon_{prefix}")
+    print(f"   i-PI working directory: {workdir}")
+    try:
+        ensemble.run_forces(workdir=workdir)
+    except Exception as exc:
+        print(f"Error running i-PI forces: {exc}")
+        return None
+
+    n_disp, n_ens, n_at, _ = ensemble.forces.shape
+    print(f"   {n_ens} ensemble members | {n_disp} displacements | {n_at} atoms/supercell")
+
+    ensemble.compute_bands(npoints=phonon_path_npoints)
+
+    # ── bsmin (from mean phonon, in requested units) ───────────────────────────
+    mean_ph = ensemble.mean_phonon
+    all_freqs_thz = np.concatenate(
+        [seg.ravel() for seg in mean_ph.band_structure.frequencies]
+    )
+    # Conversion from phonopy-native THz to the requested units
+    from .config import THZ_TO_CM_FACTOR, EV_TO_THZ_FACTOR
+    if units == "cm-1":
+        freq_scale = THZ_TO_CM_FACTOR
+    elif units == "eV":
+        freq_scale = 1.0 / EV_TO_THZ_FACTOR
+    else:
+        freq_scale = 1.0
+    bsmin = float(all_freqs_thz.min() * freq_scale)
+
+    # ── plot unit (uqphonon only accepts "THz", "cm-1", "meV") ────────────────
+    uq_unit = units if units in ("THz", "cm-1") else "THz"
+
+    # ── generate plots ────────────────────────────────────────────────────────
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    formula = atoms.get_chemical_formula()
+    color_map = {"ensemble": "tab:blue", "mean+std": "tab:blue", "spectral": None}
+
+    for mode in uq_plot_modes:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        kwargs = {}
+        if mode != "spectral":
+            kwargs["color"] = color_map.get(mode, "tab:blue")
+        kwargs["std_alpha"] = 0.25
+        try:
+            ensemble.plot(ax=ax, mode=mode, unit=uq_unit, **kwargs)
+        except Exception as exc:
+            print(f"   Warning: plot mode '{mode}' failed ({exc}); skipping.")
+            plt.close(fig)
+            continue
+        if bsmin < -0.1:
+            ax.axhline(0, color="k", lw=0.8, ls="--")
+        title_mode = mode.replace("+", " ± ") if mode == "mean+std" else mode
+        ax.set_title(f"{formula} — {model_name} ({title_mode})")
+        plt.tight_layout()
+        safe_mode = mode.replace("+", "plus").replace(" ", "_")
+        plot_path = os.path.join(output_dir, f"{prefix}_phonon_uq_{safe_mode}.png")
+        plt.savefig(plot_path, dpi=150)
+        plt.close(fig)
+        print(f"   Saved: {plot_path}")
+
+    # ── text summary ──────────────────────────────────────────────────────────
+    time_taken = time.time() - start_time
+    summary_path = os.path.join(output_dir, f"{prefix}_phonon_uq_summary.txt")
+    with open(summary_path, "w") as fh:
+        fh.write("--- Phonon UQ Run Summary ---\n")
+        fh.write(f"Structure Formula: {formula}\n")
+        fh.write(f"Number of Atoms (primitive cell): {len(atoms)}\n")
+        fh.write(f"Engine: {engine}  |  Model: {model_name}\n")
+        fh.write(f"Units: {units}\n")
+        fh.write(f"Supercell: ({sc[0]}, {sc[1]}, {sc[2]})\n")
+        fh.write(f"Displacement delta: {delta} Å\n")
+        fh.write(f"Ensemble members: {n_ens}\n")
+        fh.write(f"Displacements: {n_disp}\n")
+        fh.write(f"Atoms per supercell: {n_at}\n")
+        fh.write(f"Most negative mean frequency: {bsmin:.4f} {units}\n")
+        stable_threshold = -0.1  # THz — below this is a genuine imaginary mode
+        fh.write(f"Dynamically stable: {'Yes' if bsmin > stable_threshold else 'No (imaginary modes present)'}\n")
+        fh.write(f"Time taken: {time_taken:.2f} s\n")
+    print(f"   UQ summary saved: {summary_path}")
+    print(f"\n» Phonon UQ done in {time_taken:.2f} s  |  min freq = {bsmin:.4f} {units}")
+
+    # Compatible return with run_single_phonon_analysis
+    return [], bsmin, time_taken, {}
+
+
 def copy_structure_files_to_phonon_analysis_dir(phonon_analysis_dir, final_structures_dir, analysis_id):
    """
    Copy all structure file variants (CIF, XYZ, conventional, primitive) from final_structures/

@@ -10,7 +10,7 @@ from .utils.utils import clean_phonon_cache, get_arg_parser_and_settings, parse_
 from .auto_optimize import run_phonon_calculation_sweep_optimization, run_automatic_soft_mode_optimization, run_neb_soft_mode_optimization, run_ci_neb_soft_mode_optimization, run_md_stability_analysis
 from .utils.structure_utils import load_structure, initialize_calculator
 from .utils.relaxation_utils import relax_structure
-from .utils.phonon_utils import run_single_phonon_analysis, load_eigenmode_from_band_yaml
+from .utils.phonon_utils import run_single_phonon_analysis, run_phonon_analysis_with_uq, load_eigenmode_from_band_yaml
 
 def main():
     ###############################################
@@ -155,6 +155,7 @@ def main():
             "gpumd": "_GPUMD",
             "nep": "_NEP",          # calorine/NEP engine via CPUNEP
             "calorine": "_CALORINE",
+            "pet": "_PET",          # upet PET-MAD / PET-OMat / PET-OAM etc.
         }
         engine_suffix = engine_suffix_map.get(args.engine, f"_{args.engine.upper()}")
 
@@ -597,29 +598,70 @@ def main():
             print("Error: --band_yaml_path requires both --q and --band_idx to be specified.")
             sys.exit(1)
             
-        # Call the consolidated run_single_phonon_analysis function
-        softest_modes_info_list, bsmin, time_taken, tracked_k_points_data = run_single_phonon_analysis(
-            current_atoms.copy(),
-            calculator,
-            args.engine,
-            args.units,
-            args.supercell_dims,  # Use parsed supercell dimensions
-            args.delta,
-            args.fmax,
-            output_dir, # Use the specific directory for single phonon run
-            prefix=cif_filename_base,
-            phonon_path_npoints=args.phonon_path_npoints,
-            phonon_dos_grid=args.phonon_dos_grid,
-            traj_kT=args.traj_kT,
-            num_modes_to_return=args.num_modes_to_return,
-            q_point_for_specific_mode=q_point,
-            band_idx_for_specific_mode=args.band_idx,
-            displacement_magnitude=args.displacement,
-            preloaded_eigenmode_data=preloaded_eigenmode_data,
-            negative_phonon_threshold=args.negative_phonon_threshold_thz,
-            save_yaml=args.save_yaml,
-            compute_pdos=args.compute_pdos
-        )
+        # --phonon-uq: ensemble UQ via uqphonon (only for pet engine)
+        if getattr(args, "phonon_uq", False):
+            uq_result = run_phonon_analysis_with_uq(
+                current_atoms.copy(),
+                engine=args.engine,
+                model_name=args.model_name,
+                units=args.units,
+                supercell_dims=args.supercell_dims,
+                delta=args.delta,
+                fmax=args.fmax,
+                output_dir=output_dir,
+                prefix=cif_filename_base,
+                phonon_path_npoints=args.phonon_path_npoints,
+            )
+            if uq_result is not None:
+                softest_modes_info_list, bsmin, time_taken, tracked_k_points_data = uq_result
+            else:
+                print("UQ calculation failed or unsupported; falling back to standard phonon analysis.")
+                softest_modes_info_list, bsmin, time_taken, tracked_k_points_data = run_single_phonon_analysis(
+                    current_atoms.copy(),
+                    calculator,
+                    args.engine,
+                    args.units,
+                    args.supercell_dims,
+                    args.delta,
+                    args.fmax,
+                    output_dir,
+                    prefix=cif_filename_base,
+                    phonon_path_npoints=args.phonon_path_npoints,
+                    phonon_dos_grid=args.phonon_dos_grid,
+                    traj_kT=args.traj_kT,
+                    num_modes_to_return=args.num_modes_to_return,
+                    q_point_for_specific_mode=q_point,
+                    band_idx_for_specific_mode=args.band_idx,
+                    displacement_magnitude=args.displacement,
+                    preloaded_eigenmode_data=preloaded_eigenmode_data,
+                    negative_phonon_threshold=args.negative_phonon_threshold_thz,
+                    save_yaml=args.save_yaml,
+                    compute_pdos=args.compute_pdos,
+                )
+        else:
+            # Call the consolidated run_single_phonon_analysis function
+            softest_modes_info_list, bsmin, time_taken, tracked_k_points_data = run_single_phonon_analysis(
+                current_atoms.copy(),
+                calculator,
+                args.engine,
+                args.units,
+                args.supercell_dims,  # Use parsed supercell dimensions
+                args.delta,
+                args.fmax,
+                output_dir, # Use the specific directory for single phonon run
+                prefix=cif_filename_base,
+                phonon_path_npoints=args.phonon_path_npoints,
+                phonon_dos_grid=args.phonon_dos_grid,
+                traj_kT=args.traj_kT,
+                num_modes_to_return=args.num_modes_to_return,
+                q_point_for_specific_mode=q_point,
+                band_idx_for_specific_mode=args.band_idx,
+                displacement_magnitude=args.displacement,
+                preloaded_eigenmode_data=preloaded_eigenmode_data,
+                negative_phonon_threshold=args.negative_phonon_threshold_thz,
+                save_yaml=args.save_yaml,
+                compute_pdos=args.compute_pdos,
+            )
 
         
     print("\n--- Phonon Calculation Script Finished ---")

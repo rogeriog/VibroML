@@ -22,6 +22,7 @@ wheels/
 .installed.cfg
 *.egg
 *.tmp
+*.log
 
 examples/
 get_full_package_context.py
@@ -30,3 +31,7 @@ concatenated_project_summary.txt
 vibroml_full_package_context.txt
 ga_recovery.py
 evaluate_all.py
+all_python_files.txt
+VibroML_Technical_Report.md
+.history/
+*.tar.gz
