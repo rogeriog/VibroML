@@ -924,6 +924,18 @@ def _phonon_preinitialize_calculators(n, calculator, engine=None, model_name=Non
        for i in range(n):
            _phonon_preinitialized_calcs.append(calculator)
 
+   # Warmup: do a dummy forward pass on each calculator to trigger lazy initialization
+   # (MACE models have lazy modules that race when multiple threads trigger them simultaneously)
+   try:
+       from ase import Atoms
+       warmup_atoms = Atoms('H2', positions=[[0, 0, 0], [0, 0, 0.74]], cell=[10, 10, 10], pbc=True)
+       for i, calc in enumerate(_phonon_preinitialized_calcs):
+           warmup_atoms.calc = calc
+           _ = warmup_atoms.get_forces()
+       warmup_atoms.calc = None
+   except Exception as e:
+       print(f"   Warning: warmup failed ({e}), proceeding anyway")
+
    print(f"   Pre-initialization done in {time.time()-t0:.2f}s")
 
 def _phonon_get_thread_local_calc():

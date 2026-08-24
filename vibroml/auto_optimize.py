@@ -513,6 +513,19 @@ def _preinitialize_calculators(n, args):
             checkpoint_model_path=args.checkpoint_model
         )
         _preinitialized_calculators.append(calc)
+
+    # Warmup: do a dummy forward pass on each calculator to trigger lazy initialization
+    # (MACE models have lazy modules that race when multiple threads trigger them simultaneously)
+    try:
+        from ase import Atoms
+        warmup_atoms = Atoms('H2', positions=[[0, 0, 0], [0, 0, 0.74]], cell=[10, 10, 10], pbc=True)
+        for calc in _preinitialized_calculators:
+            warmup_atoms.calc = calc
+            _ = warmup_atoms.get_forces()
+        warmup_atoms.calc = None
+    except Exception as e:
+        print(f"  Warning: warmup failed ({e}), proceeding anyway")
+
     print(f"  Pre-initialization done in {time.time()-t0:.2f}s")
 
 def _get_thread_local_calculator(args):
