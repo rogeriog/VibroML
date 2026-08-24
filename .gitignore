@@ -35,3 +35,6 @@ all_python_files.txt
 VibroML_Technical_Report.md
 .history/
 *.tar.gz
+build/
+vibroml.egg-info/
+dist/

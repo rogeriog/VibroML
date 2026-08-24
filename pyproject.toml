@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vibroml"
+version = "0.1.0"
+description = "A Python toolkit for ML-driven vibrational analysis of crystalline materials."
+readme = "README.md"
+license = "MIT"
+authors = [
+    {name = "Rogerio Gouvea", email = "rogeriog.em@gmail.com"},
+]
+keywords = ["materials science", "phonons", "machine learning", "AIMD", "stability"]
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "ase>=3.23",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "pymatgen>=2024.1",
+    "scipy>=1.10",
+    "spglib>=2.0",
+    "pyyaml>=6.0",
+    "torch>=2.0",
+]
+
+[project.optional-dependencies]
+mace = [
+    "mace-torch>=0.3.10",
+    "e3nn>=0.4.4",
+]
+m3gnet = [
+    "m3gnet>=0.2.4",
+    "tensorflow>=2.15",
+]
+fairchem = [
+    "fairchem-core>=1.10",
+]
+calorine = [
+    "calorine>=0.2",
+]
+upet = [
+    "upet",
+]
+uqphonon = [
+    "uqphonon",
+]
+all = [
+    "mace-torch>=0.3.10",
+    "e3nn>=0.4.4",
+    "m3gnet>=0.2.4",
+    "tensorflow>=2.15",
+    "fairchem-core>=1.10",
+    "calorine>=0.2",
+]
+dev = [
+    "pytest>=7.0",
+    "build>=1.0",
+    "twine>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/rogeriog/VibroML"
+Repository = "https://github.com/rogeriog/VibroML"
+
+[project.scripts]
+vibroml = "vibroml.main:main"
+
+[tool.setuptools.packages.find]
+exclude = ["tests*", "examples*", "scripts*", "build*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
