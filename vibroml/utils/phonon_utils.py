@@ -5,8 +5,10 @@ import shutil
 import io
 import time
 import json
+import threading
 import numpy as np
 from math import pi, sqrt
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from ase.phonons import Phonons
 from ase.io import read, write
 from ase.atoms import Atoms
@@ -146,7 +148,7 @@ def calculate_and_save_pdos(ph, dos_grid, width, npts, output_dir, prefix, units
       traceback.print_exc()
       
    print(f"  PDOS calculation took {time.time() - start_time:.2f} s")
-def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False):
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False, max_workers=1):
    """
    Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
 
@@ -273,7 +275,8 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
       return [mode_info], converted_frequency, time_taken
 
    print("\n--- Step 1: Running Phonon Calculation ---")
-   ph = run_phonon_calculation(atoms, calculator, supercell_dims, delta, output_dir)
+   ph = run_phonon_calculation(atoms, calculator, supercell_dims, delta, output_dir, max_workers=max_workers,
+                               engine=engine)
    if ph is None:
       print("Error during phonon calculation setup.")
       return [], None, None # Return empty list for modes
@@ -806,7 +809,7 @@ def add_frequency_to_structure_filenames(final_structures_dir, analysis_id, soft
 
 
 
-def run_phonon_calculation_with_custom_supercell(atoms, calculator, supercell_dims, delta, output_dir):
+def run_phonon_calculation_with_custom_supercell(atoms, calculator, supercell_dims, delta, output_dir, max_workers=1):
    """Sets up and runs the phonon calculation with custom supercell dimensions."""
    from .utils import parse_supercell_dimensions
    start = time.time()
@@ -821,49 +824,275 @@ def run_phonon_calculation_with_custom_supercell(atoms, calculator, supercell_di
    print(f"   Using displacement delta: {delta}")
 
    # Phonon calculator
-   phonon_calc_path = os.path.join(output_dir, "phonon_files_temp")       
-   if os.path.exists(phonon_calc_path):  
-      print(f"   Clearing existing phonon calculation directory: {phonon_calc_path}")  
+   phonon_calc_path = os.path.join(output_dir, "phonon_files_temp")
+   if os.path.exists(phonon_calc_path):
+      print(f"   Clearing existing phonon calculation directory: {phonon_calc_path}")
       shutil.rmtree(phonon_calc_path)
    ph = Phonons(atoms, calculator, supercell=supercell, delta=delta, name=phonon_calc_path)
-   ph.run()
+
+   if max_workers > 1:
+       _run_phonon_displacements_parallel(ph, atoms, calculator, supercell, delta, max_workers)
+   else:
+       ph.run()
 
    # Read forces and assemble the dynamical matrix
    ph.read(acoustic=True)
    ph.clean()
-   
+
    print("Phonon calculation completed.")
    end = time.time()
    print(f"Phonon calculation took {end - start:.2f} seconds")
    return ph
 
-def run_phonon_calculation(atoms, calculator, supercell_dims, delta, output_dir):
-   """Sets up and runs the phonon calculation."""
+# Thread-local calculator storage for parallel phonon force evaluation
+_phonon_tls = threading.local()
+_phonon_preinitialized_calcs = []
+_phonon_calc_init_lock = threading.Lock()
+
+def _phonon_preinitialize_calculators(n, calculator, engine=None, model_name=None,
+                                      checkpoint_path=None, nep_model_path=None,
+                                      checkpoint_model_path=None):
+   """Pre-initialize n calculator copies sequentially before spawning threads.
+   This avoids torch.fx symbolic_trace race conditions in MACE.
+
+   Each thread needs its own calculator instance because ASE's Calculator
+   base class has internal state (self.atoms, cached results) that is not
+   thread-safe. Sharing a single calculator across threads causes cache
+   corruption and 'forces not present' errors."""
+   global _phonon_preinitialized_calcs
+   _phonon_preinitialized_calcs.clear()
+   print(f"   Pre-initializing {n} phonon calculators (sequential)...")
+   t0 = time.time()
+
+   created = False
+
+   # Strategy 1: Use initialize_calculator with engine parameters
+   if engine is not None:
+       try:
+           from .structure_utils import initialize_calculator
+           for i in range(n):
+               calc = initialize_calculator(
+                   engine, model_name=model_name,
+                   checkpoint_path=checkpoint_path, nep_model_path=nep_model_path,
+                   checkpoint_model_path=checkpoint_model_path
+               )
+               _phonon_preinitialized_calcs.append(calc)
+           created = True
+       except Exception as e:
+           print(f"   Warning: initialize_calculator failed ({e}), trying calculator-specific copy")
+
+   # Strategy 2: For MACE, extract model_paths and create new instances
+   if not created:
+       try:
+           from mace.calculators import MACECalculator
+           if isinstance(calculator, MACECalculator):
+               import torch
+               device = str(calculator.device)
+               # Get dtype from the model
+               model_dtype = str(calculator.models[0].dtype) if hasattr(calculator, 'models') else 'torch.float32'
+               dtype = 'float64' if 'float64' in model_dtype else 'float32'
+               # Get model_paths - MACECalculator stores the original paths
+               model_paths = getattr(calculator, 'model_paths', None)
+               if model_paths is not None:
+                   if isinstance(model_paths, list):
+                       model_paths = model_paths[0]  # Use first model
+                   for i in range(n):
+                       calc = MACECalculator(
+                           model_paths=model_paths,
+                           device=device, default_dtype=dtype
+                       )
+                       _phonon_preinitialized_calcs.append(calc)
+                   created = True
+       except ImportError:
+           pass
+       except Exception as e:
+           print(f"   Warning: MACE calculator copy failed ({e})")
+
+   # Strategy 3: Fallback to deepcopy
+   if not created:
+       try:
+           import copy
+           for i in range(n):
+               _phonon_preinitialized_calcs.append(copy.deepcopy(calculator))
+           created = True
+       except Exception as e:
+           print(f"   Warning: deepcopy failed ({e})")
+
+   # Strategy 4: Last resort - share the same calculator (may cause thread-safety issues)
+   if not created:
+       print(f"   Warning: Could not create calculator copies. Using shared calculator.")
+       for i in range(n):
+           _phonon_preinitialized_calcs.append(calculator)
+
+   print(f"   Pre-initialization done in {time.time()-t0:.2f}s")
+
+def _phonon_get_thread_local_calc():
+   """Get a thread-local calculator for phonon force evaluation."""
+   if not hasattr(_phonon_tls, 'calc') or _phonon_tls.calc is None:
+       with _phonon_calc_init_lock:
+           if _phonon_preinitialized_calcs:
+               _phonon_tls.calc = _phonon_preinitialized_calcs.pop()
+   return _phonon_tls.calc
+
+def _compute_phonon_forces(args):
+   """Worker function: compute forces on a single displaced configuration.
+   Each displacement is a single-point calculation (no relaxation needed)."""
+   (disp_id, atoms_copy) = args
+   calc = _phonon_get_thread_local_calc()
+   if calc is None:
+       raise RuntimeError("No calculator available for thread")
+   atoms_copy.calc = calc
+   forces = atoms_copy.get_forces()
+   return (disp_id, forces.copy())
+
+def _run_phonon_displacements_parallel(ph, atoms, calculator, supercell, delta, max_workers,
+                                       engine=None, model_name=None,
+                                       checkpoint_path=None, nep_model_path=None,
+                                       checkpoint_model_path=None):
+   """Run phonon force evaluations in parallel using ThreadPoolExecutor.
+
+   This bypasses ASE's sequential Phonons.run() by:
+   1. Pre-generating all displaced supercell configurations
+   2. Evaluating forces concurrently with pre-initialized calculators
+   3. Populating the Phonons cache so read() can assemble force constants
+
+   The key insight is that each phonon displacement is an independent
+   single-point force calculation - no data dependency between displacements.
+
+   Each thread gets its own calculator instance because ASE's Calculator
+   base class has internal state (self.atoms, cached results) that is not
+   thread-safe.
+   """
+   from ase.utils.filecache import MultiFileJSONCache
+
+   # Build the supercell
+   atoms_N = atoms * supercell
+   natoms = len(atoms)
+   offset = natoms * ph.offset
+   pos = atoms_N.positions[offset: offset + natoms].copy()
+
+   # Pre-generate ALL displaced configurations
+   tasks = []
+
+   # Equilibrium configuration
+   eq_atoms = atoms_N.copy()
+   tasks.append(("eq", eq_atoms))
+
+   # All displacements: for each atom, each direction, each sign
+   for a in ph.indices:
+       for i in range(3):
+           for sign in [-1, 1]:
+               disp_id = f"{a}_{i}_{'p' if sign > 0 else 'm'}"
+               disp_atoms = atoms_N.copy()
+               disp_atoms.positions[offset + a, i] = pos[a, i] + sign * delta
+               tasks.append((disp_id, disp_atoms))
+
+   n_disp = len(tasks)
+   print(f"   Parallel phonon: {n_disp} displacements, {max_workers} workers")
+   print(f"   Supercell atoms: {len(atoms_N)}")
+
+   # Pre-initialize separate calculator instances for each thread
+   _phonon_preinitialize_calculators(
+       max_workers, calculator, engine=engine, model_name=model_name,
+       checkpoint_path=checkpoint_path, nep_model_path=nep_model_path,
+       checkpoint_model_path=checkpoint_model_path
+   )
+
+   # Evaluate all forces in parallel
+   t0 = time.time()
+   results = {}
+
+   with ThreadPoolExecutor(max_workers=max_workers) as executor:
+       futures = {}
+       for task in tasks:
+           disp_id = task[0]
+           future = executor.submit(_compute_phonon_forces, (disp_id, task[1]))
+           futures[future] = disp_id
+
+       for future in as_completed(futures):
+           disp_id = futures[future]
+           try:
+               _, forces = future.result()
+               results[disp_id] = forces
+           except Exception as e:
+               print(f"   Error for displacement {disp_id}: {e}")
+               results[disp_id] = None
+
+   elapsed = time.time() - t0
+   n_success = sum(1 for v in results.values() if v is not None)
+   print(f"   Force evaluation: {n_success}/{n_disp} succeeded in {elapsed:.2f}s")
+
+   # Clear pre-initialized calculators
+   _phonon_preinitialized_calcs.clear()
+
+   # Populate the Phonons cache so read() can assemble force constants
+   cache = MultiFileJSONCache(ph.name)
+
+   # Save equilibrium
+   eq_disp = ph._eq_disp()
+   with cache.lock(eq_disp.name) as handle:
+       if handle is not None:
+           handle.save({'forces': results.get('eq')})
+
+   # Save all displacements
+   for a in ph.indices:
+       for i in range(3):
+           for sign in [-1, 1]:
+               disp_id_str = f"{a}_{i}_{'p' if sign > 0 else 'm'}"
+               disp = ph._disp(a, i, sign)
+               with cache.lock(disp.name) as handle:
+                   if handle is not None:
+                       handle.save({'forces': results.get(disp_id_str)})
+
+def run_phonon_calculation(atoms, calculator, supercell_dims, delta, output_dir, max_workers=1,
+                           engine=None, model_name=None, checkpoint_path=None,
+                           nep_model_path=None, checkpoint_model_path=None):
+   """Sets up and runs the phonon calculation.
+
+   Args:
+      max_workers: Number of parallel workers for force evaluations.
+                   1 = serial (default, uses ASE Phonons.run()).
+                   >1 = parallel ThreadPoolExecutor with pre-initialized calculators.
+      engine: Engine name for calculator initialization (needed for max_workers>1).
+      model_name, checkpoint_path, nep_model_path, checkpoint_model_path:
+          Calculator initialization parameters (needed for max_workers>1).
+   """
    from .utils import parse_supercell_dimensions
    start = time.time()
    atoms.set_calculator(calculator) # Ensure calculator is set for phonon calculation
 
    # Handle both old supercell_n (integer) and new custom supercell formats
-   if isinstance(supercell_dims, tuple):  
-      supercell = supercell_dims  
-   else:  
+   if isinstance(supercell_dims, tuple):
+      supercell = supercell_dims
+   else:
       supercell = parse_supercell_dimensions(supercell_dims)
 
    print("\n### Structure for Phonon Calculation ###")
    print("   The phonon band structure will be calculated using the current structure.")
    print(f"   Using supercell size: {supercell}")
    print(f"   Using displacement delta: {delta}")
+   if max_workers > 1:
+       print(f"   Using parallel force evaluation with {max_workers} workers")
 
    # Phonon calculator
-   
-   # Isolate the phonon calculation files by setting a unique path for this run.  
-   # This prevents reusing results from other steps in the GA.  
-   phonon_calc_path = os.path.join(output_dir, "phonon_files_temp")       
-   if os.path.exists(phonon_calc_path):  
-       print(f"   Clearing existing phonon calculation directory: {phonon_calc_path}")  
+
+   # Isolate the phonon calculation files by setting a unique path for this run.
+   # This prevents reusing results from other steps in the GA.
+   phonon_calc_path = os.path.join(output_dir, "phonon_files_temp")
+   if os.path.exists(phonon_calc_path):
+       print(f"   Clearing existing phonon calculation directory: {phonon_calc_path}")
        shutil.rmtree(phonon_calc_path)
    ph = Phonons(atoms, calculator, supercell=supercell, delta=delta, name=phonon_calc_path)
-   ph.run()
+
+   if max_workers > 1:
+       _run_phonon_displacements_parallel(
+           ph, atoms, calculator, supercell, delta, max_workers,
+           engine=engine, model_name=model_name,
+           checkpoint_path=checkpoint_path, nep_model_path=nep_model_path,
+           checkpoint_model_path=checkpoint_model_path
+       )
+   else:
+       ph.run()
 
    # Read forces and assemble the dynamical matrix
    ph.read(acoustic=True)

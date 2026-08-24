@@ -322,7 +322,8 @@ def main():
                 band_idx_for_specific_mode=args.band_idx,
                 num_modes_to_return=0, 
                 save_yaml=args.save_yaml,
-                compute_pdos=args.compute_pdos
+                compute_pdos=args.compute_pdos,
+                max_workers=getattr(args, 'max_workers', 1)
             )
 
             # 3. Set required variables for the GA step
@@ -438,7 +439,8 @@ def main():
             num_modes_to_return=args.num_modes_to_return,
             negative_phonon_threshold=args.negative_phonon_threshold_thz,
             save_yaml=args.save_yaml,
-            compute_pdos=args.compute_pdos
+            compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
         )
 
         # Now run the optimization workflow with the phonon results
@@ -637,6 +639,7 @@ def main():
                     negative_phonon_threshold=args.negative_phonon_threshold_thz,
                     save_yaml=args.save_yaml,
                     compute_pdos=args.compute_pdos,
+                max_workers=getattr(args, 'max_workers', 1),
                 )
         else:
             # Call the consolidated run_single_phonon_analysis function
@@ -661,6 +664,7 @@ def main():
                 negative_phonon_threshold=args.negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
+                max_workers=getattr(args, 'max_workers', 1),
             )
 
         

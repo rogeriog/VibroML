@@ -299,7 +299,8 @@ def run_phonon_calculation_sweep_optimization(args, output_dir, initial_atoms, c
             num_modes_to_return=num_modes_to_return,
             negative_phonon_threshold=negative_phonon_threshold_thz,
             save_yaml=args.save_yaml,
-            compute_pdos=args.compute_pdos
+            compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
         )
 
         if neg_freq_at_special_point is not None:
@@ -764,7 +765,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             traj_kT=default_traj_kT, num_modes_to_return=num_modes_to_return,
             negative_phonon_threshold=negative_phonon_threshold_thz,
             save_yaml=args.save_yaml,
-            compute_pdos=args.compute_pdos
+            compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
         )
         
         if recovered_modes:
@@ -1356,7 +1358,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 num_modes_to_return=num_modes_to_return,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
-                compute_pdos=args.compute_pdos
+                compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
 
             )
             # Update the guiding atoms and soft mode list for the next loop
@@ -1515,7 +1518,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 final_structures_dir=final_structure_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
-                compute_pdos=args.compute_pdos
+                compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
             )
             # Store detailed data for the second summary
             final_phonon_metadata.append({
@@ -1576,7 +1580,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                     final_structures_dir=final_structure_dir,
                     negative_phonon_threshold=negative_phonon_threshold_thz,
                     save_yaml=args.save_yaml,
-                    compute_pdos=args.compute_pdos
+                    compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
                 )
 
                 final_phonon_metadata.append({
@@ -2018,7 +2023,8 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                 num_modes_to_return=num_modes_to_return,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
-                compute_pdos=args.compute_pdos
+                compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
             )
             current_primitive_atoms = primitive_atoms_for_next_iter.copy()
             softest_modes_info_list = next_softest_modes_info_list
@@ -2129,7 +2135,8 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                 final_structures_dir=final_structure_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
-                compute_pdos=args.compute_pdos
+                compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
             )
 
             # COLLECT METADATA
@@ -2192,7 +2199,8 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                     final_structures_dir=final_structures_dir,
                     negative_phonon_threshold=negative_phonon_threshold_thz,
                     save_yaml=args.save_yaml,
-                    compute_pdos=args.compute_pdos
+                    compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
                 )
 
                 # COLLECT METADATA
@@ -2440,7 +2448,8 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                 num_modes_to_return=num_modes_to_return,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
-                compute_pdos=args.compute_pdos
+                compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
             )
 
             # Identify all soft modes
@@ -3056,7 +3065,8 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                 final_structures_dir=final_structures_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
-                compute_pdos=args.compute_pdos
+                compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
             )
             print(f"  Completed phonon analysis for top structure {i+1}")
 
@@ -3126,7 +3136,8 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                     final_structures_dir=final_structures_dir,
                     negative_phonon_threshold=negative_phonon_threshold_thz,
                     save_yaml=args.save_yaml,
-                    compute_pdos=args.compute_pdos
+                    compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
                 )
                 print(f"  Completed phonon analysis for unique structure {i+1}")
                 
@@ -3858,7 +3869,8 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                 final_structures_dir=final_structures_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
-                compute_pdos=args.compute_pdos
+                compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
             )
             print(f"  Completed phonon analysis for top structure {i+1}")
             
@@ -3923,7 +3935,8 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                     final_structures_dir=final_structures_dir,
                     negative_phonon_threshold=negative_phonon_threshold_thz,
                     save_yaml=args.save_yaml,
-                    compute_pdos=args.compute_pdos
+                    compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
                 )
                 print(f"  Completed phonon analysis for unique structure {i+1}")
                 
@@ -4302,7 +4315,8 @@ def run_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft
                 final_structures_dir=final_structures_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
-                compute_pdos=args.compute_pdos
+                compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
             )
             print(f"  Completed phonon analysis for {img_type} image")
 
@@ -4531,7 +4545,8 @@ def run_ci_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_s
                 final_structures_dir=final_structures_dir,
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
-                compute_pdos=args.compute_pdos
+                compute_pdos=args.compute_pdos,
+            max_workers=getattr(args, 'max_workers', 1)
             )
             print(f"  Completed phonon analysis for {img_type} image")
 

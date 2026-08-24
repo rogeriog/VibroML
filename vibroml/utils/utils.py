@@ -296,7 +296,7 @@ def get_arg_parser_and_settings():
     parser.add_argument("--ga_mutation_rate", type=float, default=settings["ga_mutation_rate"], help=f"Mutation rate for GA (default: {settings['ga_mutation_rate']}).")
     parser.add_argument("--ga_generations", type=int, default=settings["ga_generations"], help=f"Number of GA generations per main iteration (default: {settings['ga_generations']}).")
     parser.add_argument("--num_new_points_per_iteration", type=int, default=settings["num_new_points_per_iteration"], help=f"New structures per GA iteration (default: {settings['num_new_points_per_iteration']}).")
-    parser.add_argument("--max_workers", type=int, default=1, help="Number of parallel workers for GA offspring evaluation. 1=serial (default). Recommended: 2-4 for single-GPU. Note: values >4 may cause torch.fx race conditions with MACE.")
+    parser.add_argument("--max_workers", type=int, default=1, help="Number of parallel workers for GA offspring evaluation and phonon force calculations. 1=serial (default). Recommended: 2-4 for single-GPU. Uses ThreadPoolExecutor with pre-initialized calculators to avoid torch.fx race conditions.")
     parser.add_argument("--q", type=str, default=None, help="Q-point for generating a displaced supercell (e.g., '0.5,0,0').")
     parser.add_argument("--band_idx", type=int, default=None, help="Index of the phonon mode for displacement.")
     parser.add_argument("--displacement", type=float, default=1.0, help="Displacement magnitude in Angstroms (default: 1.0).")
