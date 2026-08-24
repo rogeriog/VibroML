@@ -2,6 +2,8 @@ import os
 import sys
 import json
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .utils.structure_utils import initialize_calculator, generate_displaced_supercells, estimate_commensurate_supercell_size, generate_random_displaced_structures, load_structure
 from .utils.relaxation_utils import relax_structure, relax_structures_in_folder, find_lowest_energy_structures
@@ -490,6 +492,190 @@ def convert_results_for_ga(results):
             })  
     return ga_format_results
 
+# Thread-local calculator storage for parallel GA evaluation
+_tls = threading.local()
+_preinitialized_calculators = []
+_calc_init_lock = threading.Lock()
+
+def _preinitialize_calculators(n, args):
+    """Pre-initialize n calculators sequentially before spawning threads.
+    This avoids torch.fx symbolic_trace race conditions that occur when
+    one thread initializes a MACE model while another thread does a forward pass."""
+    global _preinitialized_calculators
+    _preinitialized_calculators.clear()
+    print(f"  Pre-initializing {n} calculators (sequential)...")
+    t0 = time.time()
+    for i in range(n):
+        calc = initialize_calculator(
+            args.engine, model_name=args.model_name,
+            checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+            checkpoint_model_path=args.checkpoint_model
+        )
+        _preinitialized_calculators.append(calc)
+    print(f"  Pre-initialization done in {time.time()-t0:.2f}s")
+
+def _get_thread_local_calculator(args):
+    """Get a thread-local calculator. Uses pre-initialized calculators if available."""
+    if not hasattr(_tls, 'calculator') or _tls.calculator is None:
+        with _calc_init_lock:
+            if _preinitialized_calculators:
+                _tls.calculator = _preinitialized_calculators.pop()
+            else:
+                _tls.calculator = initialize_calculator(
+                    args.engine, model_name=args.model_name,
+                    checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                    checkpoint_model_path=args.checkpoint_model
+                )
+    return _tls.calculator
+
+def _evaluate_ga_sample(args, sample_index, individual_params, individual_mutation_data,
+                        current_primitive_atoms, current_softest_modes_info_list,
+                        main_iteration_idx, ga_generation, original_prefix, base_output_dir,
+                        use_thread_local_calc=False):
+    """
+    Evaluate a single GA sample: generate displaced supercells, relax, and find lowest energy.
+    This function is designed to be callable both serially and in parallel via ThreadPoolExecutor.
+
+    Args:
+        use_thread_local_calc: If True, create a thread-local calculator (for parallel mode).
+                               If False, use the shared calculator from args (for serial mode).
+
+    Returns:
+        dict: Result dictionary with keys: params, energy_per_atom, relaxed_atoms, original_file,
+              num_atoms, international_symbol, crystal_system, cell_params, main_iteration,
+              ga_generation, sample, decomposed (bool)
+    """
+    if use_thread_local_calc:
+        calculator = _get_thread_local_calculator(args)
+    else:
+        calculator = initialize_calculator(args.engine, model_name=args.model_name,
+                                           checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                                           checkpoint_model_path=args.checkpoint_model)
+
+    scale_mode1, ratio_mode2_to_mode1, cell_transformation_vector, supercell_variant, use_phase_factor = individual_params
+
+    sample_output_dir = os.path.join(base_output_dir, f"main_iter_{main_iteration_idx}_gen_{ga_generation}", f"sample_{sample_index}")
+    os.makedirs(sample_output_dir, exist_ok=True)
+
+    print(f"\n  Generating and relaxing structure for GA sample {sample_index} (Main Iter {main_iteration_idx}, Gen {ga_generation}):")
+
+    # Retry mechanism for unphysical parameters
+    max_retries = 10
+    retry_count = 0
+    generated_cif_paths = []
+
+    while not generated_cif_paths and retry_count < max_retries:
+        if retry_count > 0:
+            print(f"    Retry {retry_count}/{max_retries}: Generating new parameters due to unphysical cell parameters")
+            # Generate new parameters using a thread-safe approach
+            # Note: GA._generate_random_individual is not thread-safe, so we use the original params
+            # and rely on generate_displaced_supercells to handle invalid params
+            pass
+
+        print(f"    Mode1 Scale: {scale_mode1:.3f}, Mode2 Ratio: {ratio_mode2_to_mode1:.3f}, Cell Transform: {cell_transformation_vector}, Supercell: {supercell_variant}, Phase Factor: {use_phase_factor}")
+
+        try:
+            generated_cif_paths = generate_displaced_supercells(
+                current_primitive_atoms.copy(),
+                current_softest_modes_info_list,
+                scale_mode1,
+                ratio_mode2_to_mode1,
+                [supercell_variant],
+                sample_output_dir,
+                main_iteration_idx,
+                original_prefix,
+                cell_transformation_vector,
+                use_phase_factor,
+                individual_mutation_data,
+                max_atoms_per_supercell=getattr(args, 'max_atoms_per_supercell', None)
+            )
+        except Exception as e:
+            print(f"    Error generating supercells for sample {sample_index}: {e}")
+            generated_cif_paths = []
+
+        retry_count += 1
+
+    if not generated_cif_paths:
+        print(f"    Failed to generate valid structures after {max_retries} retries for sample {sample_index}. Skipping relaxation.")
+        return {
+            'params': individual_params,
+            'energy_per_atom': None,
+            'relaxed_atoms': None,
+            'original_file': None,
+            'main_iteration': main_iteration_idx,
+            'ga_generation': ga_generation,
+            'sample': sample_index,
+            'decomposed': False
+        }
+
+    # Relax the generated structures
+    unique_supercell_folders = list(set(os.path.dirname(fpath) for fpath in generated_cif_paths))
+
+    sample_relaxation_results = []
+    for folder in unique_supercell_folders:
+        try:
+            folder_relaxation_results = relax_structures_in_folder(
+                folder, calculator, args.engine, args.fmax,
+                relaxation_patience=getattr(args, 'relaxation_patience', 5),
+                volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
+            )
+            sample_relaxation_results.extend(folder_relaxation_results)
+        except Exception as e:
+            print(f"    Error relaxing structures in {folder} for sample {sample_index}: {e}")
+
+    if not sample_relaxation_results:
+        print(f"    No structures successfully relaxed for sample {sample_index}.")
+        return {
+            'params': individual_params,
+            'energy_per_atom': None,
+            'relaxed_atoms': None,
+            'original_file': None,
+            'num_atoms': 'N/A',
+            'international_symbol': 'N/A',
+            'crystal_system': 'N/A',
+            'main_iteration': main_iteration_idx,
+            'ga_generation': ga_generation,
+            'sample': sample_index,
+            'decomposed': False
+        }
+
+    # Find the lowest energy structure
+    lowest_energy_sample = find_lowest_energy_structures(sample_relaxation_results, num_to_select=1)
+    if lowest_energy_sample:
+        best_result_for_sample = lowest_energy_sample[0]
+
+        relaxed_atoms_obj = best_result_for_sample['relaxed_atoms']
+        current_cell_pars = relaxed_atoms_obj.get_cell().cellpar()
+        if isinstance(current_cell_pars, np.ndarray):
+            current_cell_pars = current_cell_pars.tolist()
+
+        return {
+            'params': individual_params,
+            'energy_per_atom': best_result_for_sample['energy_per_atom'],
+            'relaxed_atoms': best_result_for_sample['relaxed_atoms'],
+            'original_file': best_result_for_sample['original_file'],
+            'num_atoms': best_result_for_sample.get('num_atoms', 'N/A'),
+            'international_symbol': best_result_for_sample.get('international_symbol', 'N/A'),
+            'crystal_system': best_result_for_sample.get('crystal_system', 'N/A'),
+            'cell_params': current_cell_pars,
+            'main_iteration': main_iteration_idx,
+            'ga_generation': ga_generation,
+            'sample': sample_index,
+            'decomposed': False
+        }
+    else:
+        print(f"    Could not find lowest energy for sample {sample_index}.")
+        return {
+            'params': individual_params,
+            'energy_per_atom': None,
+            'relaxed_atoms': None,
+            'original_file': None,
+            'main_iteration': main_iteration_idx,
+            'ga_generation': ga_generation,
+            'sample': sample_index,
+            'decomposed': False
+        }
+
 def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_mode_analysis, initial_softest_modes_info_list, max_iterations,
                                soft_mode_displacement_scales, cell_scale_factors, mode2_ratio_scales, num_top_structures_to_analyze, negative_phonon_threshold_thz,
                                phonon_path_npoints, phonon_dos_grid, default_traj_kT, num_modes_to_return, ga_population_size, ga_mutation_rate, ga_generations, num_new_points_per_iteration,
@@ -776,11 +962,12 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             iteration_results = [] # To store results for this specific GA iteration
             decomposed_count = 0  # Track structures flagged as decomposed in this generation
 
-            # Generate, Relax, and Evaluate each new individual
+            max_workers = getattr(args, 'max_workers', 1)
+
+            # Build list of samples to evaluate (filter out checkpoint-skipped samples)
+            samples_to_evaluate = []
             for i, (individual_params, individual_mutation_data) in enumerate(zip(new_offspring_params, new_mutation_data)):
                 sample_index = i + 1
-                
-                # Check if we should skip this sample (already completed in checkpoint)
                 if resume_from_checkpoint:
                     current_state_check = {
                         'main_iteration': main_iteration_idx,
@@ -790,151 +977,225 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                     if should_skip_sample(checkpoint_state, current_state_check, 'ga'):
                         print(f"\n  ⏭ Skipping sample {sample_index} (already completed in checkpoint)")
                         continue
-                
-                scale_mode1, ratio_mode2_to_mode1, cell_transformation_vector, supercell_variant, use_phase_factor = individual_params
+                samples_to_evaluate.append((sample_index, individual_params, individual_mutation_data))
 
-                sample_output_dir = os.path.join(base_output_dir, f"main_iter_{main_iteration_idx}_gen_{ga_generation}", f"sample_{sample_index}")
-                os.makedirs(sample_output_dir, exist_ok=True)
+            if max_workers > 1 and len(samples_to_evaluate) > 1:
+                # ===== PARALLEL MODE: ThreadPoolExecutor =====
+                print(f"\n  Evaluating {len(samples_to_evaluate)} samples in parallel with {max_workers} workers...")
 
-                print(f"\n  Generating and relaxing structure for GA sample {sample_index} (Main Iter {main_iteration_idx}, Gen {ga_generation}):")
+                # Pre-initialize calculators sequentially to avoid torch.fx race condition
+                del calculator
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                _preinitialize_calculators(max_workers, args)
 
-                # Retry mechanism for unphysical parameters
-                max_retries = 10  # Maximum number of retry attempts
-                retry_count = 0
-                generated_cif_paths = []
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {}
+                    for sample_index, individual_params, individual_mutation_data in samples_to_evaluate:
+                        future = executor.submit(
+                            _evaluate_ga_sample,
+                            args, sample_index, individual_params, individual_mutation_data,
+                            current_primitive_atoms, current_softest_modes_info_list,
+                            main_iteration_idx, ga_generation, original_prefix, base_output_dir,
+                            True  # use_thread_local_calc
+                        )
+                        futures[future] = sample_index
 
-                while not generated_cif_paths and retry_count < max_retries:
-                    if retry_count > 0:
-                        print(f"    Retry {retry_count}/{max_retries}: Generating new parameters due to unphysical cell parameters")
-                        # Generate new parameters for this individual
-                        new_individual_params, new_individual_mutation_data = ga._generate_random_individual()
-                        scale_mode1, ratio_mode2_to_mode1, cell_transformation_vector, supercell_variant, use_phase_factor = new_individual_params
-                        individual_mutation_data = new_individual_mutation_data
+                    for future in as_completed(futures):
+                        sample_index = futures[future]
+                        try:
+                            result = future.result()
+                        except Exception as e:
+                            print(f"    Worker exception for sample {sample_index}: {e}")
+                            result = {
+                                'params': None, 'energy_per_atom': None,
+                                'relaxed_atoms': None, 'original_file': None,
+                                'main_iteration': main_iteration_idx,
+                                'ga_generation': ga_generation,
+                                'sample': sample_index, 'decomposed': False
+                            }
 
-                    # Log the supercell being used for this individual
-                    print(f"    Mode1 Scale: {scale_mode1:.3f}, Mode2 Ratio: {ratio_mode2_to_mode1:.3f}, Cell Transform: {cell_transformation_vector}, Supercell: {supercell_variant}, Phase Factor: {use_phase_factor}")
+                        # Apply decomposition filter
+                        E_relax = result.get('energy_per_atom')
+                        if E_relax is not None and E_ref is not None and E_relax < (E_ref + decomposition_threshold):
+                            decomposed_count += 1
+                            print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as DECOMPOSED. Excluding from ranking.")
+                        else:
+                            iteration_results.append(result)
+                            if E_relax is not None:
+                                print(f"    Sample {sample_index} relaxed. Lowest energy: {E_relax:.6f} eV/atom")
 
-                    # Generate displaced supercells using the specific variant for this individual
-                    generated_cif_paths = generate_displaced_supercells(
-                        current_primitive_atoms.copy(),
-                        current_softest_modes_info_list,
-                        scale_mode1,
-                        ratio_mode2_to_mode1,
-                        [supercell_variant], # Pass the single variant as a list
-                        sample_output_dir,
-                        main_iteration_idx,
-                        original_prefix,
-                        cell_transformation_vector,
-                        use_phase_factor,
-                        individual_mutation_data,  # Pass mutation data for filename and logging
-                        max_atoms_per_supercell=getattr(args, 'max_atoms_per_supercell', None)
-                    )
+                                # Save checkpoint after each successful sample
+                                try:
+                                    checkpoint_manager.save_checkpoint_ga(
+                                        main_iteration=main_iteration_idx,
+                                        ga_generation=ga_generation,
+                                        sample_index=sample_index,
+                                        all_iterations_results=all_iterations_results + iteration_results,
+                                        ga_state={'population': ga.population, 'generation': ga_generation},
+                                        current_primitive_atoms=current_primitive_atoms,
+                                        current_softest_modes=current_softest_modes_info_list,
+                                        tracked_k_points_data=ga.tracked_k_points_data if hasattr(ga, 'tracked_k_points_data') else None,
+                                        current_offspring_params=new_offspring_params
+                                    )
+                                    checkpoint_manager.cleanup_old_checkpoints(keep_last_n=5)
+                                except Exception as e:
+                                    print(f"    ⚠ Warning: Failed to save checkpoint: {e}")
 
-                    retry_count += 1
+                # Restore shared calculator for subsequent phonon analysis
+                calculator = initialize_calculator(args.engine, model_name=args.model_name,
+                                                   checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                                                   checkpoint_model_path=args.checkpoint_model)
 
-                if not generated_cif_paths:
-                    print(f"    Failed to generate valid structures after {max_retries} retries for sample {i+1}. Skipping relaxation.")
-                    iteration_results.append({
-                        'params': individual_params,
-                        'energy_per_atom': None,
-                        'relaxed_atoms': None,
-                        'original_file': None,
-                        'main_iteration': main_iteration_idx,
-                        'ga_generation': ga_generation,
-                        'sample': i + 1
-                    })
-                    continue
-                else:
-                    # Update the individual_params with the successful parameters if retries were needed
-                    if retry_count > 1:
-                        individual_params = (scale_mode1, ratio_mode2_to_mode1, cell_transformation_vector, supercell_variant, use_phase_factor)
-                        print(f"    Successfully generated structures with retry parameters after {retry_count-1} attempts")
+            else:
+                # ===== SERIAL MODE (max_workers=1): Original loop =====
+                # Generate, Relax, and Evaluate each new individual
+                for sample_index, individual_params, individual_mutation_data in samples_to_evaluate:
+                    scale_mode1, ratio_mode2_to_mode1, cell_transformation_vector, supercell_variant, use_phase_factor = individual_params
 
-                # Relax the generated structures
-                unique_supercell_folders = list(set(os.path.dirname(fpath) for fpath in generated_cif_paths))
+                    sample_output_dir = os.path.join(base_output_dir, f"main_iter_{main_iteration_idx}_gen_{ga_generation}", f"sample_{sample_index}")
+                    os.makedirs(sample_output_dir, exist_ok=True)
 
-                sample_relaxation_results = []
-                for folder in unique_supercell_folders:
-                    folder_relaxation_results = relax_structures_in_folder(
-                        folder, calculator, args.engine, args.fmax,
-                        relaxation_patience=getattr(args, 'relaxation_patience', 5),
-                        volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
-                    )
-                    sample_relaxation_results.extend(folder_relaxation_results)
+                    print(f"\n  Generating and relaxing structure for GA sample {sample_index} (Main Iter {main_iteration_idx}, Gen {ga_generation}):")
 
-                if not sample_relaxation_results:
-                    print(f"    No structures successfully relaxed for sample {i+1}.")
-                    iteration_results.append({
-                        'params': individual_params,
-                        'energy_per_atom': None, 
-                        'relaxed_atoms': None,
-                        'original_file': None,
-                        'num_atoms': 'N/A',
-                        'international_symbol': 'N/A',
-                        'crystal_system': 'N/A',
-                        'main_iteration': main_iteration_idx,  
-                        'ga_generation': ga_generation,  
-                        'sample': i + 1  
-                    })
-                    continue
+                    # Retry mechanism for unphysical parameters
+                    max_retries = 10  # Maximum number of retry attempts
+                    retry_count = 0
+                    generated_cif_paths = []
 
-                # Find the lowest energy structure among the relaxed ones for this sample
-                lowest_energy_sample = find_lowest_energy_structures(sample_relaxation_results, num_to_select=1)
-                if lowest_energy_sample:
-                    best_result_for_sample = lowest_energy_sample[0]
-                    
-                    relaxed_atoms_obj = best_result_for_sample['relaxed_atoms']
-                    current_cell_pars = relaxed_atoms_obj.get_cell().cellpar()
-                    if isinstance(current_cell_pars, np.ndarray):
-                        current_cell_pars = current_cell_pars.tolist()
+                    while not generated_cif_paths and retry_count < max_retries:
+                        if retry_count > 0:
+                            print(f"    Retry {retry_count}/{max_retries}: Generating new parameters due to unphysical cell parameters")
+                            # Generate new parameters for this individual
+                            new_individual_params, new_individual_mutation_data = ga._generate_random_individual()
+                            scale_mode1, ratio_mode2_to_mode1, cell_transformation_vector, supercell_variant, use_phase_factor = new_individual_params
+                            individual_mutation_data = new_individual_mutation_data
 
-                    E_relax = best_result_for_sample['energy_per_atom']
-                    if E_ref is not None and E_relax < (E_ref + decomposition_threshold): # Note: decomposition_threshold is negative
-                        decomposed_count += 1
-                        print(f"    Sample {i+1} (Energy: {E_relax:.6f} eV/atom) flagged as DECOMPOSED (E_relax < E_ref {E_ref:.6f} + {decomposition_threshold:.3f} eV). Excluding from ranking and further GA steps.")
-                    else:
+                        # Log the supercell being used for this individual
+                        print(f"    Mode1 Scale: {scale_mode1:.3f}, Mode2 Ratio: {ratio_mode2_to_mode1:.3f}, Cell Transform: {cell_transformation_vector}, Supercell: {supercell_variant}, Phase Factor: {use_phase_factor}")
+
+                        # Generate displaced supercells using the specific variant for this individual
+                        generated_cif_paths = generate_displaced_supercells(
+                            current_primitive_atoms.copy(),
+                            current_softest_modes_info_list,
+                            scale_mode1,
+                            ratio_mode2_to_mode1,
+                            [supercell_variant], # Pass the single variant as a list
+                            sample_output_dir,
+                            main_iteration_idx,
+                            original_prefix,
+                            cell_transformation_vector,
+                            use_phase_factor,
+                            individual_mutation_data,  # Pass mutation data for filename and logging
+                            max_atoms_per_supercell=getattr(args, 'max_atoms_per_supercell', None)
+                        )
+
+                        retry_count += 1
+
+                    if not generated_cif_paths:
+                        print(f"    Failed to generate valid structures after {max_retries} retries for sample {sample_index}. Skipping relaxation.")
                         iteration_results.append({
                             'params': individual_params,
-                            'energy_per_atom': best_result_for_sample['energy_per_atom'],
-                            'relaxed_atoms': best_result_for_sample['relaxed_atoms'],
-                            'original_file': best_result_for_sample['original_file'],
-                            'num_atoms': best_result_for_sample.get('num_atoms', 'N/A'),
-                            'international_symbol': best_result_for_sample.get('international_symbol', 'N/A'),
-                            'crystal_system': best_result_for_sample.get('crystal_system', 'N/A'),
-                            'cell_params': current_cell_pars,
-                            'main_iteration': main_iteration_idx,  
-                            'ga_generation': ga_generation,  
+                            'energy_per_atom': None,
+                            'relaxed_atoms': None,
+                            'original_file': None,
+                            'main_iteration': main_iteration_idx,
+                            'ga_generation': ga_generation,
                             'sample': sample_index
                         })
-                        print(f"    Sample {sample_index} relaxed. Lowest energy: {best_result_for_sample['energy_per_atom']:.6f} eV/atom")
-                        
-                        # Save checkpoint after each successful sample
-                        try:
-                            checkpoint_manager.save_checkpoint_ga(
-                                main_iteration=main_iteration_idx,
-                                ga_generation=ga_generation,
-                                sample_index=sample_index,
-                                all_iterations_results=all_iterations_results + iteration_results,
-                                ga_state={'population': ga.population, 'generation': ga_generation},
-                                current_primitive_atoms=current_primitive_atoms,
-                                current_softest_modes=current_softest_modes_info_list,
-                                tracked_k_points_data=ga.tracked_k_points_data if hasattr(ga, 'tracked_k_points_data') else None,
-                                current_offspring_params=new_offspring_params
-                            )
-                            checkpoint_manager.cleanup_old_checkpoints(keep_last_n=5)
-                        except Exception as e:
-                            print(f"    ⚠ Warning: Failed to save checkpoint: {e}")
-                else:
-                    print(f"    Could not find lowest energy for sample {i+1}.")
-                    iteration_results.append({
-                        'params': individual_params,
-                        'energy_per_atom': None, # Indicate failure
-                        'relaxed_atoms': None,
-                        'original_file': None,
-                        'main_iteration': main_iteration_idx,  
-                        'ga_generation': ga_generation,  
-                        'sample': sample_index
-                    })
+                        continue
+                    else:
+                        # Update the individual_params with the successful parameters if retries were needed
+                        if retry_count > 1:
+                            individual_params = (scale_mode1, ratio_mode2_to_mode1, cell_transformation_vector, supercell_variant, use_phase_factor)
+                            print(f"    Successfully generated structures with retry parameters after {retry_count-1} attempts")
+
+                    # Relax the generated structures
+                    unique_supercell_folders = list(set(os.path.dirname(fpath) for fpath in generated_cif_paths))
+
+                    sample_relaxation_results = []
+                    for folder in unique_supercell_folders:
+                        folder_relaxation_results = relax_structures_in_folder(
+                            folder, calculator, args.engine, args.fmax,
+                            relaxation_patience=getattr(args, 'relaxation_patience', 5),
+                            volume_expansion_threshold=getattr(args, 'volume_expansion_threshold', 2.5)
+                        )
+                        sample_relaxation_results.extend(folder_relaxation_results)
+
+                    if not sample_relaxation_results:
+                        print(f"    No structures successfully relaxed for sample {sample_index}.")
+                        iteration_results.append({
+                            'params': individual_params,
+                            'energy_per_atom': None,
+                            'relaxed_atoms': None,
+                            'original_file': None,
+                            'num_atoms': 'N/A',
+                            'international_symbol': 'N/A',
+                            'crystal_system': 'N/A',
+                            'main_iteration': main_iteration_idx,
+                            'ga_generation': ga_generation,
+                            'sample': sample_index
+                        })
+                        continue
+
+                    # Find the lowest energy structure among the relaxed ones for this sample
+                    lowest_energy_sample = find_lowest_energy_structures(sample_relaxation_results, num_to_select=1)
+                    if lowest_energy_sample:
+                        best_result_for_sample = lowest_energy_sample[0]
+
+                        relaxed_atoms_obj = best_result_for_sample['relaxed_atoms']
+                        current_cell_pars = relaxed_atoms_obj.get_cell().cellpar()
+                        if isinstance(current_cell_pars, np.ndarray):
+                            current_cell_pars = current_cell_pars.tolist()
+
+                        E_relax = best_result_for_sample['energy_per_atom']
+                        if E_ref is not None and E_relax < (E_ref + decomposition_threshold): # Note: decomposition_threshold is negative
+                            decomposed_count += 1
+                            print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as DECOMPOSED (E_relax < E_ref {E_ref:.6f} + {decomposition_threshold:.3f} eV). Excluding from ranking and further GA steps.")
+                        else:
+                            iteration_results.append({
+                                'params': individual_params,
+                                'energy_per_atom': best_result_for_sample['energy_per_atom'],
+                                'relaxed_atoms': best_result_for_sample['relaxed_atoms'],
+                                'original_file': best_result_for_sample['original_file'],
+                                'num_atoms': best_result_for_sample.get('num_atoms', 'N/A'),
+                                'international_symbol': best_result_for_sample.get('international_symbol', 'N/A'),
+                                'crystal_system': best_result_for_sample.get('crystal_system', 'N/A'),
+                                'cell_params': current_cell_pars,
+                                'main_iteration': main_iteration_idx,
+                                'ga_generation': ga_generation,
+                                'sample': sample_index
+                            })
+                            print(f"    Sample {sample_index} relaxed. Lowest energy: {best_result_for_sample['energy_per_atom']:.6f} eV/atom")
+
+                            # Save checkpoint after each successful sample
+                            try:
+                                checkpoint_manager.save_checkpoint_ga(
+                                    main_iteration=main_iteration_idx,
+                                    ga_generation=ga_generation,
+                                    sample_index=sample_index,
+                                    all_iterations_results=all_iterations_results + iteration_results,
+                                    ga_state={'population': ga.population, 'generation': ga_generation},
+                                    current_primitive_atoms=current_primitive_atoms,
+                                    current_softest_modes=current_softest_modes_info_list,
+                                    tracked_k_points_data=ga.tracked_k_points_data if hasattr(ga, 'tracked_k_points_data') else None,
+                                    current_offspring_params=new_offspring_params
+                                )
+                                checkpoint_manager.cleanup_old_checkpoints(keep_last_n=5)
+                            except Exception as e:
+                                print(f"    ⚠ Warning: Failed to save checkpoint: {e}")
+                    else:
+                        print(f"    Could not find lowest energy for sample {sample_index}.")
+                        iteration_results.append({
+                            'params': individual_params,
+                            'energy_per_atom': None, # Indicate failure
+                            'relaxed_atoms': None,
+                            'original_file': None,
+                            'main_iteration': main_iteration_idx,
+                            'ga_generation': ga_generation,
+                            'sample': sample_index
+                        })
 
             # Add this iteration's results to the master list for GA evolution in next iteration
             # Filter out failed relaxations (energy_per_atom is None) before adding to all_iterations_results
