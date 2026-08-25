@@ -1000,42 +1000,71 @@ def _run_phonon_displacements_parallel(ph, atoms, calculator, supercell, delta, 
                tasks.append((disp_id, disp_atoms))
 
    n_disp = len(tasks)
+   n_atoms_supercell = len(atoms_N)
    print(f"   Parallel phonon: {n_disp} displacements, {max_workers} workers")
-   print(f"   Supercell atoms: {len(atoms_N)}")
+   print(f"   Supercell atoms: {n_atoms_supercell}")
 
-   # Pre-initialize separate calculator instances for each thread
-   _phonon_preinitialize_calculators(
-       max_workers, calculator, engine=engine, model_name=model_name,
-       checkpoint_path=checkpoint_path, nep_model_path=nep_model_path,
-       checkpoint_model_path=checkpoint_model_path
-   )
+   # Memory check: reduce workers if GPU or host memory is insufficient
+   from .utils import safe_worker_count
+   safe_workers, mem_reason = safe_worker_count(max_workers, n_atoms=n_atoms_supercell, context='phonon')
+   if safe_workers < max_workers:
+      print(f"   ⚠ Memory check: {mem_reason}")
+      print(f"   Reducing workers: {max_workers} → {safe_workers}")
+      max_workers = safe_workers
+   else:
+      print(f"   Memory check: {mem_reason}")
 
-   # Evaluate all forces in parallel
-   t0 = time.time()
-   results = {}
+   if max_workers <= 1:
+      print(f"   Using serial force evaluation (1 worker)")
+      # Use the original calculator for serial evaluation
+      t0 = time.time()
+      results = {}
+      for disp_id, atoms_copy in tasks:
+          try:
+              atoms_copy.calc = calculator
+              forces = atoms_copy.get_forces()
+              results[disp_id] = forces.copy()
+              atoms_copy.calc = None
+          except Exception as e:
+              print(f"   Error for displacement {disp_id}: {e}")
+              results[disp_id] = None
+      elapsed = time.time() - t0
+      n_success = sum(1 for v in results.values() if v is not None)
+      print(f"   Force evaluation: {n_success}/{n_disp} succeeded in {elapsed:.2f}s")
+   else:
+      # Pre-initialize separate calculator instances for each thread
+      _phonon_preinitialize_calculators(
+          max_workers, calculator, engine=engine, model_name=model_name,
+          checkpoint_path=checkpoint_path, nep_model_path=nep_model_path,
+          checkpoint_model_path=checkpoint_model_path
+      )
 
-   with ThreadPoolExecutor(max_workers=max_workers) as executor:
-       futures = {}
-       for task in tasks:
-           disp_id = task[0]
-           future = executor.submit(_compute_phonon_forces, (disp_id, task[1]))
-           futures[future] = disp_id
+      # Evaluate all forces in parallel
+      t0 = time.time()
+      results = {}
 
-       for future in as_completed(futures):
-           disp_id = futures[future]
-           try:
-               _, forces = future.result()
-               results[disp_id] = forces
-           except Exception as e:
-               print(f"   Error for displacement {disp_id}: {e}")
-               results[disp_id] = None
+      with ThreadPoolExecutor(max_workers=max_workers) as executor:
+          futures = {}
+          for task in tasks:
+              disp_id = task[0]
+              future = executor.submit(_compute_phonon_forces, (disp_id, task[1]))
+              futures[future] = disp_id
 
-   elapsed = time.time() - t0
-   n_success = sum(1 for v in results.values() if v is not None)
-   print(f"   Force evaluation: {n_success}/{n_disp} succeeded in {elapsed:.2f}s")
+          for future in as_completed(futures):
+              disp_id = futures[future]
+              try:
+                  _, forces = future.result()
+                  results[disp_id] = forces
+              except Exception as e:
+                  print(f"   Error for displacement {disp_id}: {e}")
+                  results[disp_id] = None
 
-   # Clear pre-initialized calculators
-   _phonon_preinitialized_calcs.clear()
+      elapsed = time.time() - t0
+      n_success = sum(1 for v in results.values() if v is not None)
+      print(f"   Force evaluation: {n_success}/{n_disp} succeeded in {elapsed:.2f}s")
+
+      # Clear pre-initialized calculators
+      _phonon_preinitialized_calcs.clear()
 
    # Populate the Phonons cache so read() can assemble force constants
    cache = MultiFileJSONCache(ph.name)

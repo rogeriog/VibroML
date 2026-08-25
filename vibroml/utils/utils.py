@@ -210,6 +210,110 @@ def get_mace_device():
       return device
    else:
       return None # MACE not available
+
+def get_gpu_memory_info():
+   """Returns (free_bytes, total_bytes) for GPU 0, or (0, 0) if no CUDA."""
+   if torch.cuda.is_available():
+      free, total = torch.cuda.mem_get_info(0)
+      return free, total
+   return 0, 0
+
+def get_host_memory_info():
+   """Returns (available_bytes, total_bytes) for host RAM."""
+   try:
+      import psutil
+      vm = psutil.virtual_memory()
+      return vm.available, vm.total
+   except ImportError:
+      # Fallback to /proc/meminfo
+      try:
+         avail = total = 0
+         with open('/proc/meminfo') as f:
+            for line in f:
+               if line.startswith('MemAvailable'):
+                  avail = int(line.split()[1]) * 1024
+               if line.startswith('MemTotal'):
+                  total = int(line.split()[1]) * 1024
+         return avail, total
+      except Exception:
+         return 0, 0
+
+def safe_worker_count(requested_workers, n_atoms=0, context='phonon'):
+   """Determine a safe number of parallel workers based on available GPU and host memory.
+
+   Each MACE calculator copy uses approximately:
+     - ~10 GB GPU memory (model weights + CUDA context)
+     - ~6 GB host RAM (model loading + ASE overhead)
+
+   For phonon calculations on large supercells, the forward pass also needs
+   additional GPU memory proportional to the number of atoms.
+
+   Args:
+      requested_workers: User-requested worker count.
+      n_atoms: Number of atoms in the supercell (for phonon) or structure (for GA).
+               Used to estimate additional GPU memory for the forward pass.
+      context: 'phonon' or 'ga' — phonon uses supercells (larger), GA uses primitive cells.
+
+   Returns:
+      (adjusted_workers, reason) — the safe worker count and a string explaining any reduction.
+   """
+   if requested_workers <= 1:
+      return 1, "serial (requested)"
+
+   # Per-calculator baseline memory costs (bytes)
+   GPU_MEM_PER_CALC = 10 * 1024**3   # ~10 GB per MACE calculator on GPU
+   HOST_MEM_PER_CALC = 6 * 1024**3   # ~6 GB per MACE calculator on host
+
+   # Additional GPU memory for forward pass (scales with atoms)
+   # MACE message passing: memory scales ~quadratically with atoms for large systems
+   # Empirical estimate: ~0.5 MB per atom for the forward pass
+   GPU_MEM_PER_ATOM = 0.5 * 1024**2
+
+   # Safety margin: keep 15% of total memory free as headroom
+   GPU_SAFETY_MARGIN = 0.15
+   HOST_SAFETY_MARGIN = 0.15
+
+   gpu_free, gpu_total = get_gpu_memory_info()
+   host_avail, host_total = get_host_memory_info()
+
+   # If no memory info available at all, don't reduce
+   if gpu_total == 0 and host_total == 0:
+      return requested_workers, f"no memory info, using requested {requested_workers}"
+
+   # Calculate per-worker GPU memory need
+   forward_pass_gpu = n_atoms * GPU_MEM_PER_ATOM if n_atoms > 0 else 0
+   gpu_per_worker = GPU_MEM_PER_CALC + forward_pass_gpu
+
+   # Calculate per-worker host memory need
+   host_per_worker = HOST_MEM_PER_CALC
+
+   # Determine max workers from GPU memory (only if GPU is available)
+   max_workers_gpu = requested_workers
+   if gpu_total > 0:
+      usable_gpu = gpu_free * (1 - GPU_SAFETY_MARGIN)
+      max_workers_gpu = int(usable_gpu // gpu_per_worker) if gpu_per_worker > 0 else requested_workers
+      max_workers_gpu = max(1, max_workers_gpu)
+
+   # Determine max workers from host memory (only if we can query it)
+   max_workers_host = requested_workers
+   if host_total > 0:
+      usable_host = host_avail * (1 - HOST_SAFETY_MARGIN)
+      max_workers_host = int(usable_host // host_per_worker) if host_per_worker > 0 else requested_workers
+      max_workers_host = max(1, max_workers_host)
+
+   # Take the minimum
+   max_safe = min(max_workers_gpu, max_workers_host, requested_workers)
+
+   if max_safe < requested_workers:
+      gpu_str = f"GPU: {gpu_free/1e9:.1f}/{gpu_total/1e9:.1f} GB free, {gpu_per_worker/1e9:.1f} GB/worker" if gpu_total > 0 else "GPU: N/A"
+      host_str = f"host: {host_avail/1e9:.1f}/{host_total/1e9:.1f} GB avail, {host_per_worker/1e9:.1f} GB/worker" if host_total > 0 else "host: N/A"
+      reason = (f"reduced {requested_workers}→{max_safe} "
+                f"({gpu_str}; {host_str}; atoms={n_atoms})")
+   else:
+      gpu_str = f"GPU {gpu_free/1e9:.1f} GB free" if gpu_total > 0 else "no GPU"
+      reason = f"ok ({requested_workers} workers, {gpu_str})"
+
+   return max_safe, reason
     
 def get_arg_parser_and_settings():
     """

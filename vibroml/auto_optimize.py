@@ -996,75 +996,88 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
 
             if max_workers > 1 and len(samples_to_evaluate) > 1:
                 # ===== PARALLEL MODE: ThreadPoolExecutor =====
-                print(f"\n  Evaluating {len(samples_to_evaluate)} samples in parallel with {max_workers} workers...")
+                # Memory check: reduce workers if GPU or host memory is insufficient
+                from vibroml.utils.utils import safe_worker_count
+                n_atoms_ga = len(current_primitive_atoms)
+                safe_workers, mem_reason = safe_worker_count(max_workers, n_atoms=n_atoms_ga, context='ga')
+                if safe_workers < max_workers:
+                    print(f"\n  ⚠ Memory check: {mem_reason}")
+                    print(f"  Reducing GA workers: {max_workers} → {safe_workers}")
+                    max_workers = safe_workers
 
-                # Pre-initialize calculators sequentially to avoid torch.fx race condition
-                del calculator
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                _preinitialize_calculators(max_workers, args)
+                if max_workers <= 1:
+                    print(f"\n  Falling back to serial GA evaluation (insufficient memory for parallel)")
+                    # Fall through to serial mode below
+                else:
+                    print(f"\n  Evaluating {len(samples_to_evaluate)} samples in parallel with {max_workers} workers...")
 
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {}
-                    for sample_index, individual_params, individual_mutation_data in samples_to_evaluate:
-                        future = executor.submit(
-                            _evaluate_ga_sample,
-                            args, sample_index, individual_params, individual_mutation_data,
-                            current_primitive_atoms, current_softest_modes_info_list,
-                            main_iteration_idx, ga_generation, original_prefix, base_output_dir,
-                            True  # use_thread_local_calc
-                        )
-                        futures[future] = sample_index
+                    # Pre-initialize calculators sequentially to avoid torch.fx race condition
+                    del calculator
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    _preinitialize_calculators(max_workers, args)
 
-                    for future in as_completed(futures):
-                        sample_index = futures[future]
-                        try:
-                            result = future.result()
-                        except Exception as e:
-                            print(f"    Worker exception for sample {sample_index}: {e}")
-                            result = {
-                                'params': None, 'energy_per_atom': None,
-                                'relaxed_atoms': None, 'original_file': None,
-                                'main_iteration': main_iteration_idx,
-                                'ga_generation': ga_generation,
-                                'sample': sample_index, 'decomposed': False
-                            }
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = {}
+                        for sample_index, individual_params, individual_mutation_data in samples_to_evaluate:
+                            future = executor.submit(
+                                _evaluate_ga_sample,
+                                args, sample_index, individual_params, individual_mutation_data,
+                                current_primitive_atoms, current_softest_modes_info_list,
+                                main_iteration_idx, ga_generation, original_prefix, base_output_dir,
+                                True  # use_thread_local_calc
+                            )
+                            futures[future] = sample_index
 
-                        # Apply decomposition filter
-                        E_relax = result.get('energy_per_atom')
-                        if E_relax is not None and E_ref is not None and E_relax < (E_ref + decomposition_threshold):
-                            decomposed_count += 1
-                            print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as DECOMPOSED. Excluding from ranking.")
-                        else:
-                            iteration_results.append(result)
-                            if E_relax is not None:
-                                print(f"    Sample {sample_index} relaxed. Lowest energy: {E_relax:.6f} eV/atom")
+                        for future in as_completed(futures):
+                            sample_index = futures[future]
+                            try:
+                                result = future.result()
+                            except Exception as e:
+                                print(f"    Worker exception for sample {sample_index}: {e}")
+                                result = {
+                                    'params': None, 'energy_per_atom': None,
+                                    'relaxed_atoms': None, 'original_file': None,
+                                    'main_iteration': main_iteration_idx,
+                                    'ga_generation': ga_generation,
+                                    'sample': sample_index, 'decomposed': False
+                                }
 
-                                # Save checkpoint after each successful sample
-                                try:
-                                    checkpoint_manager.save_checkpoint_ga(
-                                        main_iteration=main_iteration_idx,
-                                        ga_generation=ga_generation,
-                                        sample_index=sample_index,
-                                        all_iterations_results=all_iterations_results + iteration_results,
-                                        ga_state={'population': ga.population, 'generation': ga_generation},
-                                        current_primitive_atoms=current_primitive_atoms,
-                                        current_softest_modes=current_softest_modes_info_list,
-                                        tracked_k_points_data=ga.tracked_k_points_data if hasattr(ga, 'tracked_k_points_data') else None,
-                                        current_offspring_params=new_offspring_params
-                                    )
-                                    checkpoint_manager.cleanup_old_checkpoints(keep_last_n=5)
-                                except Exception as e:
-                                    print(f"    ⚠ Warning: Failed to save checkpoint: {e}")
+                            # Apply decomposition filter
+                            E_relax = result.get('energy_per_atom')
+                            if E_relax is not None and E_ref is not None and E_relax < (E_ref + decomposition_threshold):
+                                decomposed_count += 1
+                                print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as DECOMPOSED. Excluding from ranking.")
+                            else:
+                                iteration_results.append(result)
+                                if E_relax is not None:
+                                    print(f"    Sample {sample_index} relaxed. Lowest energy: {E_relax:.6f} eV/atom")
 
-                # Restore shared calculator for subsequent phonon analysis
-                calculator = initialize_calculator(args.engine, model_name=args.model_name,
-                                                   checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
-                                                   checkpoint_model_path=args.checkpoint_model)
+                                    # Save checkpoint after each successful sample
+                                    try:
+                                        checkpoint_manager.save_checkpoint_ga(
+                                            main_iteration=main_iteration_idx,
+                                            ga_generation=ga_generation,
+                                            sample_index=sample_index,
+                                            all_iterations_results=all_iterations_results + iteration_results,
+                                            ga_state={'population': ga.population, 'generation': ga_generation},
+                                            current_primitive_atoms=current_primitive_atoms,
+                                            current_softest_modes=current_softest_modes_info_list,
+                                            tracked_k_points_data=ga.tracked_k_points_data if hasattr(ga, 'tracked_k_points_data') else None,
+                                            current_offspring_params=new_offspring_params
+                                        )
+                                        checkpoint_manager.cleanup_old_checkpoints(keep_last_n=5)
+                                    except Exception as e:
+                                        print(f"    ⚠ Warning: Failed to save checkpoint: {e}")
 
-            else:
-                # ===== SERIAL MODE (max_workers=1): Original loop =====
+                    # Restore shared calculator for subsequent phonon analysis
+                    calculator = initialize_calculator(args.engine, model_name=args.model_name,
+                                                       checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                                                       checkpoint_model_path=args.checkpoint_model)
+
+            if max_workers <= 1 or len(samples_to_evaluate) <= 1:
+                # ===== SERIAL MODE (max_workers=1 or fallback): Original loop =====
                 # Generate, Relax, and Evaluate each new individual
                 for sample_index, individual_params, individual_mutation_data in samples_to_evaluate:
                     scale_mode1, ratio_mode2_to_mode1, cell_transformation_vector, supercell_variant, use_phase_factor = individual_params
