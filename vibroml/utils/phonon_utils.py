@@ -1501,17 +1501,18 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
    # Sort all found negative modes by frequency (most negative first)
    all_negative_modes_info.sort(key=lambda x: x['frequency'])
 
-   # Select the top N softest modes
+   # Select the top N softest modes, deduplicated by q-point
+   # (one mode per q-point - the softest band at each point, since list is sorted)
    top_n_softest_modes = []
-   processed_modes_keys = set() # To avoid duplicate modes (same k-point, same band)
+   processed_q_points = set()
 
    for mode_info in all_negative_modes_info:
-      mode_key = (mode_info['kpoint_index_in_path'], mode_info['band_index'])
-      if mode_key not in processed_modes_keys:
+      q_key = tuple(round(c, 6) for c in mode_info['coordinate'])
+      if q_key not in processed_q_points:
          top_n_softest_modes.append(mode_info)
-         processed_modes_keys.add(mode_key)
+         processed_q_points.add(q_key)
          if len(top_n_softest_modes) >= num_modes_to_return:
-               break
+            break
 
    # Save special point analysis (this includes all special points, not just negative modes)
    analysis_filename = os.path.join(output_dir, "special_point_analysis.json")
@@ -1590,15 +1591,15 @@ def analyze_special_points_and_modes(ph, path, bs_energies, special_k_point_dist
          # Sort all positive modes by frequency (highest first)
          all_positive_modes_info.sort(key=lambda x: x['frequency'], reverse=True)
 
-         # Select the top N highest frequency modes
+         # Select the top N highest frequency modes, deduplicated by q-point
          top_n_highest_modes = []
-         processed_modes_keys = set() # To avoid duplicate modes (same k-point, same band)
+         processed_q_points = set()
 
          for mode_info in all_positive_modes_info:
-            mode_key = (mode_info['kpoint_index_in_path'], mode_info['band_index'])
-            if mode_key not in processed_modes_keys:
+            q_key = tuple(round(c, 6) for c in mode_info['coordinate'])
+            if q_key not in processed_q_points:
                top_n_highest_modes.append(mode_info)
-               processed_modes_keys.add(mode_key)
+               processed_q_points.add(q_key)
                if len(top_n_highest_modes) >= num_modes_to_return:
                   break
 

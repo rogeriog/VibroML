@@ -206,6 +206,54 @@ def _generate_final_phonon_summary(output_dir, metadata):
 
     print(f"✅ Final phonon property summary generated at: {summary_path}")
 
+def select_mode_with_feasible_supercell(soft_modes, primitive_atoms, max_atoms_per_supercell):
+    """Select the softest mode whose commensurate supercell fits within the atom limit.
+
+    Iterates through soft modes from softest to hardest. For each mode, estimates
+    the commensurate supercell from its q-point and checks whether the resulting
+    atom count is within the limit. Returns the first mode that fits.
+
+    Args:
+        soft_modes: List of soft mode info dicts, ordered by frequency (softest first).
+        primitive_atoms: ASE Atoms object for the primitive cell.
+        max_atoms_per_supercell: Maximum atoms allowed, or None for no limit.
+
+    Returns:
+        (selected_mode, commensurate_supercell, mode_index) or (None, (2,2,2), -1)
+        if no mode fits.
+    """
+    if max_atoms_per_supercell is None:
+        # No limit — use the softest mode
+        if soft_modes and 'coordinate' in soft_modes[0]:
+            sc = estimate_commensurate_supercell_size(soft_modes[0]['coordinate'])
+            return soft_modes[0], sc, 0
+        return (soft_modes[0] if soft_modes else None), (2, 2, 2), 0
+
+    n_atoms_primitive = len(primitive_atoms)
+
+    for i, mode in enumerate(soft_modes):
+        if 'coordinate' not in mode:
+            continue
+        q_point = mode['coordinate']
+        sc = estimate_commensurate_supercell_size(q_point)
+        nx, ny, nz = sc
+        n_atoms = n_atoms_primitive * nx * ny * nz
+
+        if n_atoms <= max_atoms_per_supercell:
+            if i > 0:
+                print(f"   ⚠ Softest mode {i} requires supercell {sc} ({n_atoms} atoms > {max_atoms_per_supercell} limit).")
+                print(f"   Skipping to mode {i+1} (freq: {mode.get('frequency', '?')}) with supercell {sc} ({n_atoms} atoms).")
+            else:
+                print(f"   Selected softest mode with supercell {sc} ({n_atoms} atoms, limit: {max_atoms_per_supercell}).")
+            return mode, sc, i
+        else:
+            print(f"   Mode {i+1} (freq: {mode.get('frequency', '?')}, q: {q_point}) → supercell {sc} = {n_atoms} atoms > {max_atoms_per_supercell} limit, skipping.")
+
+    # No mode fits — fall back to (2,2,2) with the softest mode
+    print(f"   ⚠ All {len(soft_modes)} soft modes require supercells exceeding {max_atoms_per_supercell} atoms.")
+    print(f"   Falling back to (2,2,2) supercell with softest mode (may not capture the instability accurately).")
+    return (soft_modes[0] if soft_modes else None), (2, 2, 2), 0
+
 def get_constrained_supercell_variants(iteration_idx):
     """Returns supercell list based on iteration for constrained growth."""
     stages = [
@@ -814,17 +862,18 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
     decomposition_threshold = -args.decomposition_threshold  # Convert to negative for comparison (E_relax < E_ref - threshold)
                 
     # Determine supercell variants based on the q-point of the softest mode
-    # If no soft mode info, default to (2,2,2)
-    if 'coordinate' in current_softest_modes_info_list[0]:
-        q_point_for_supercell = current_softest_modes_info_list[0]['coordinate']
-        commensurate_supercell = estimate_commensurate_supercell_size(q_point_for_supercell)
-        print(f"Using commensurate supercell size {commensurate_supercell} based on softest mode q-point {q_point_for_supercell}.")
-    else:
-        commensurate_supercell = (2,2,2) # Default to primitive if no q-point info
-        print("No q-point information for softest mode. Defaulting to (2,2,2) supercell.")  
-    
-    # Always include these specific supercells  
-    required_supercells = [(1,1,1), (2,1,1), (1,1,2), (2,2,1), (2,1,2), (2,2,2)]  
+    # that has a feasible commensurate supercell (within atom limit)
+    max_atoms_sc = getattr(args, 'max_atoms_per_supercell', None)
+    selected_mode, commensurate_supercell, selected_mode_idx = select_mode_with_feasible_supercell(
+        current_softest_modes_info_list, current_primitive_atoms, max_atoms_sc
+    )
+    if selected_mode is not None and selected_mode_idx > 0:
+        # We skipped the softest mode — update the list to start from the selected mode
+        current_softest_modes_info_list = current_softest_modes_info_list[selected_mode_idx:]
+        print(f"   Updated active soft modes list to start from mode {selected_mode_idx + 1}.")
+
+    # Always include these specific supercells
+    required_supercells = [(1,1,1), (2,1,1), (1,1,2), (2,2,1), (2,1,2), (2,2,2)]
     supercell_variants = [commensurate_supercell] + [sc for sc in required_supercells if sc != commensurate_supercell]
                 
     # Stores results for all iterations, including GA parameters, fitness (energy), and relaxed atoms object.
@@ -1405,21 +1454,18 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                   f"{len(tracked_k_points_data['lowest_freq_modes'])} lowest freq modes")
             
             # Update supercell variants based on the new guiding mode's q-point
-            if 'coordinate' in next_softest_modes_info_list[0]:
-                q_point_for_supercell = next_softest_modes_info_list[0]['coordinate']
-                
-                # FIX: Add a standard 2x2x2 (or similar) as a backup option
-                commensurate = estimate_commensurate_supercell_size(q_point_for_supercell)
-                backup_sc = (2, 2, 2) # Or use args.supercell_dims
-                
-                # Create list with both. The filter will now reject 'commensurate' if it's huge 
-                # and pick 'backup_sc' instead because it fits the atom limit.
-                supercell_variants = [commensurate, backup_sc]
-                
-                print(f"Updated commensurate supercell size to {supercell_variants[0]} based on new softest mode q-point {q_point_for_supercell}.")
-            else:
-                supercell_variants = [(2,2,2)] # Default if no q-point info
-                print("No q-point information for new softest mode. Defaulting to (2,2,2) supercell for next iteration.")
+            # Select the softest mode with a feasible supercell (within atom limit)
+            max_atoms_sc = getattr(args, 'max_atoms_per_supercell', None)
+            selected_mode, commensurate, selected_mode_idx = select_mode_with_feasible_supercell(
+                next_softest_modes_info_list, current_primitive_atoms, max_atoms_sc
+            )
+            if selected_mode is not None and selected_mode_idx > 0:
+                next_softest_modes_info_list = next_softest_modes_info_list[selected_mode_idx:]
+                print(f"   Updated next iteration soft modes to start from mode {selected_mode_idx + 1}.")
+
+            backup_sc = (2, 2, 2)
+            supercell_variants = [commensurate, backup_sc]
+            print(f"Updated commensurate supercell size to {commensurate} for next iteration.")
 
             # REMOVED: Don't stop if no soft modes found - this is exploratory
             if not current_softest_modes_info_list:  

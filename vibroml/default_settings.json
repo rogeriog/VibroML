@@ -17,7 +17,7 @@
     "soft_mode_num_top_structures_to_analyze": 5,
     "cell_scale_factors": [ -0.07, 0.0, 0.07],
     "mode2_ratio_scales": [ -0.25, 0.0, 0.25], 
-    "num_modes_to_return": 2,
+    "num_modes_to_return": 5,
     "num_new_points_per_iteration": 50,
     "ga_population_size": 100,
     "ga_mutation_rate": 0.2,
