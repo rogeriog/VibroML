@@ -323,7 +323,10 @@ def main():
                 num_modes_to_return=0, 
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
-                max_workers=getattr(args, 'max_workers', 1)
+                max_workers=getattr(args, 'max_workers', 1),
+                model_name=args.model_name,
+                checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                checkpoint_model_path=args.checkpoint_model
             )
 
             # 3. Set required variables for the GA step
@@ -440,7 +443,10 @@ def main():
             negative_phonon_threshold=args.negative_phonon_threshold_thz,
             save_yaml=args.save_yaml,
             compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+            model_name=args.model_name,
+            checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+            checkpoint_model_path=args.checkpoint_model
         )
 
         # Now run the optimization workflow with the phonon results
@@ -640,6 +646,9 @@ def main():
                     save_yaml=args.save_yaml,
                     compute_pdos=args.compute_pdos,
                 max_workers=getattr(args, 'max_workers', 1),
+                    model_name=args.model_name,
+                    checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                    checkpoint_model_path=args.checkpoint_model
                 )
         else:
             # Call the consolidated run_single_phonon_analysis function
@@ -665,6 +674,9 @@ def main():
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
                 max_workers=getattr(args, 'max_workers', 1),
+                model_name=args.model_name,
+                checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                checkpoint_model_path=args.checkpoint_model
             )
 
         

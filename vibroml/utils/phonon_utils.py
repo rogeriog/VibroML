@@ -148,7 +148,7 @@ def calculate_and_save_pdos(ph, dos_grid, width, npts, output_dir, prefix, units
       traceback.print_exc()
       
    print(f"  PDOS calculation took {time.time() - start_time:.2f} s")
-def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False, max_workers=1):
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False, max_workers=1, model_name=None, checkpoint_path=None, nep_model_path=None, checkpoint_model_path=None):
    """
    Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
 
@@ -276,7 +276,9 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
 
    print("\n--- Step 1: Running Phonon Calculation ---")
    ph = run_phonon_calculation(atoms, calculator, supercell_dims, delta, output_dir, max_workers=max_workers,
-                               engine=engine)
+                               engine=engine, model_name=model_name,
+                               checkpoint_path=checkpoint_path, nep_model_path=nep_model_path,
+                               checkpoint_model_path=checkpoint_model_path)
    if ph is None:
       print("Error during phonon calculation setup.")
       return [], None, None # Return empty list for modes
@@ -809,7 +811,9 @@ def add_frequency_to_structure_filenames(final_structures_dir, analysis_id, soft
 
 
 
-def run_phonon_calculation_with_custom_supercell(atoms, calculator, supercell_dims, delta, output_dir, max_workers=1):
+def run_phonon_calculation_with_custom_supercell(atoms, calculator, supercell_dims, delta, output_dir, max_workers=1,
+                                                  engine=None, model_name=None, checkpoint_path=None,
+                                                  nep_model_path=None, checkpoint_model_path=None):
    """Sets up and runs the phonon calculation with custom supercell dimensions."""
    from .utils import parse_supercell_dimensions
    start = time.time()
@@ -831,7 +835,10 @@ def run_phonon_calculation_with_custom_supercell(atoms, calculator, supercell_di
    ph = Phonons(atoms, calculator, supercell=supercell, delta=delta, name=phonon_calc_path)
 
    if max_workers > 1:
-       _run_phonon_displacements_parallel(ph, atoms, calculator, supercell, delta, max_workers)
+       _run_phonon_displacements_parallel(ph, atoms, calculator, supercell, delta, max_workers,
+                                          engine=engine, model_name=model_name,
+                                          checkpoint_path=checkpoint_path, nep_model_path=nep_model_path,
+                                          checkpoint_model_path=checkpoint_model_path)
    else:
        ph.run()
 

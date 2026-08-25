@@ -300,7 +300,10 @@ def run_phonon_calculation_sweep_optimization(args, output_dir, initial_atoms, c
             negative_phonon_threshold=negative_phonon_threshold_thz,
             save_yaml=args.save_yaml,
             compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+            model_name=args.model_name,
+            checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+            checkpoint_model_path=args.checkpoint_model
         )
 
         if neg_freq_at_special_point is not None:
@@ -779,7 +782,10 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             negative_phonon_threshold=negative_phonon_threshold_thz,
             save_yaml=args.save_yaml,
             compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+            model_name=args.model_name,
+            checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+            checkpoint_model_path=args.checkpoint_model
         )
         
         if recovered_modes:
@@ -1545,7 +1551,10 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                model_name=args.model_name,
+                checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                checkpoint_model_path=args.checkpoint_model
             )
             # Store detailed data for the second summary
             final_phonon_metadata.append({
@@ -1607,7 +1616,10 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                     negative_phonon_threshold=negative_phonon_threshold_thz,
                     save_yaml=args.save_yaml,
                     compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                    model_name=args.model_name,
+                    checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                    checkpoint_model_path=args.checkpoint_model
                 )
 
                 final_phonon_metadata.append({
@@ -2050,7 +2062,10 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                model_name=args.model_name,
+                checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                checkpoint_model_path=args.checkpoint_model
             )
             current_primitive_atoms = primitive_atoms_for_next_iter.copy()
             softest_modes_info_list = next_softest_modes_info_list
@@ -2162,7 +2177,10 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                model_name=args.model_name,
+                checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                checkpoint_model_path=args.checkpoint_model
             )
 
             # COLLECT METADATA
@@ -2226,7 +2244,10 @@ def run_traditional_soft_mode_optimization(args, base_output_dir, initial_atoms_
                     negative_phonon_threshold=negative_phonon_threshold_thz,
                     save_yaml=args.save_yaml,
                     compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                    model_name=args.model_name,
+                    checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                    checkpoint_model_path=args.checkpoint_model
                 )
 
                 # COLLECT METADATA
@@ -2475,7 +2496,10 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                model_name=args.model_name,
+                checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                checkpoint_model_path=args.checkpoint_model
             )
 
             # Identify all soft modes
@@ -3092,7 +3116,10 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                model_name=args.model_name,
+                checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                checkpoint_model_path=args.checkpoint_model
             )
             print(f"  Completed phonon analysis for top structure {i+1}")
 
@@ -3163,7 +3190,10 @@ def run_traditional_all_soft_mode_optimization(args, base_output_dir, initial_at
                     negative_phonon_threshold=negative_phonon_threshold_thz,
                     save_yaml=args.save_yaml,
                     compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                    model_name=args.model_name,
+                    checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                    checkpoint_model_path=args.checkpoint_model
                 )
                 print(f"  Completed phonon analysis for unique structure {i+1}")
                 
@@ -3896,7 +3926,10 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                model_name=args.model_name,
+                checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                checkpoint_model_path=args.checkpoint_model
             )
             print(f"  Completed phonon analysis for top structure {i+1}")
             
@@ -3962,7 +3995,10 @@ def run_random_structure_search(args, base_output_dir, initial_atoms_for_soft_mo
                     negative_phonon_threshold=negative_phonon_threshold_thz,
                     save_yaml=args.save_yaml,
                     compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                    model_name=args.model_name,
+                    checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                    checkpoint_model_path=args.checkpoint_model
                 )
                 print(f"  Completed phonon analysis for unique structure {i+1}")
                 
@@ -4342,7 +4378,10 @@ def run_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                model_name=args.model_name,
+                checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                checkpoint_model_path=args.checkpoint_model
             )
             print(f"  Completed phonon analysis for {img_type} image")
 
@@ -4572,7 +4611,10 @@ def run_ci_neb_soft_mode_optimization(args, base_output_dir, initial_atoms_for_s
                 negative_phonon_threshold=negative_phonon_threshold_thz,
                 save_yaml=args.save_yaml,
                 compute_pdos=args.compute_pdos,
-            max_workers=getattr(args, 'max_workers', 1)
+            max_workers=getattr(args, 'max_workers', 1),
+                model_name=args.model_name,
+                checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
+                checkpoint_model_path=args.checkpoint_model
             )
             print(f"  Completed phonon analysis for {img_type} image")
 
