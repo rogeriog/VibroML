@@ -58,7 +58,7 @@ DEFAULT_Q_MESH: Tuple[int, int, int] = (6, 6, 6)
 # Classification
 # ============================================================================
 
-def classify_stability(soft_frac: float) -> str:
+def classify_stability(soft_frac: float, stable_max: float = None, unstable_min: float = None) -> str:
     """Classify a structure into Stable / Quasi-Stable / Unstable.
 
     Parameters
@@ -66,15 +66,23 @@ def classify_stability(soft_frac: float) -> str:
     soft_frac : float
         Fraction of imaginary phonon modes on a uniform q-point mesh
         (3 Gamma acoustic modes excluded).
+    stable_max : float, optional
+        Upper bound for Stable classification. Defaults to
+        ``SOFT_FRAC_STABLE_MAX`` (0.02).
+    unstable_min : float, optional
+        Lower bound for Unstable classification. Defaults to
+        ``SOFT_FRAC_UNSTABLE_MIN`` (0.08).
 
     Returns
     -------
     str
         ``"Stable"``, ``"Quasi-Stable"``, or ``"Unstable"``.
     """
-    if soft_frac >= SOFT_FRAC_UNSTABLE_MIN:
+    s_max = stable_max if stable_max is not None else SOFT_FRAC_STABLE_MAX
+    u_min = unstable_min if unstable_min is not None else SOFT_FRAC_UNSTABLE_MIN
+    if soft_frac >= u_min:
         return "Unstable"
-    elif soft_frac >= SOFT_FRAC_STABLE_MAX:
+    elif soft_frac >= s_max:
         return "Quasi-Stable"
     else:
         return "Stable"

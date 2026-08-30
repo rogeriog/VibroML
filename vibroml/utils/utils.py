@@ -469,6 +469,23 @@ def get_arg_parser_and_settings():
     parser.add_argument('--rdf-threshold', type=float, default=0.5,
                         help='RDF correlation threshold for structural integrity assessment (default: 0.5. Lower threshold accounts for MLIP fluctuations).')
 
+    # Stability metrics arguments
+    parser.add_argument('--stability-q-mesh', type=int, nargs=3, default=None,
+                        metavar=('NX', 'NY', 'NZ'),
+                        help='Q-mesh for validated stability metrics (soft_frac, I_curv). '
+                             'Default: (6,6,6). The metrics are computed on a uniform Monkhorst-Pack mesh '
+                             'with 3 Gamma acoustic modes excluded by index.')
+    parser.add_argument('--no-stability-metrics', action='store_true', default=False,
+                        help='Disable computation of validated stability metrics (soft_frac, I_curv, '
+                             'classification). By default, these are computed alongside the phonon '
+                             'band structure and reported in the output.')
+    parser.add_argument('--stability-thresholds', type=str, default=None,
+                        metavar='STABLE,UNSTABLE',
+                        help='Custom soft_frac thresholds for classification. '
+                             'Format: "stable_max,unstable_min" (e.g., "0.02,0.08"). '
+                             'Default: 0.02 (Stable < 2%%), 0.08 (Unstable >= 8%%). '
+                             'WARNING: changing these invalidates the validated criterion.')
+
     return parser, settings
 
 def save_raw_data(bs_energies, dos_energies, all_k_point_distances, special_k_point_distances, special_k_point_labels, supercell_dims, delta, fmax, output_dir):  

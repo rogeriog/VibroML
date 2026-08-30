@@ -446,7 +446,9 @@ def main():
             max_workers=getattr(args, 'max_workers', 1),
             model_name=args.model_name,
             checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
-            checkpoint_model_path=args.checkpoint_model
+            checkpoint_model_path=args.checkpoint_model,
+            stability_q_mesh=getattr(args, 'stability_q_mesh', None),
+            no_stability_metrics=getattr(args, 'no_stability_metrics', False)
         )
 
         # Now run the optimization workflow with the phonon results
@@ -648,7 +650,9 @@ def main():
                 max_workers=getattr(args, 'max_workers', 1),
                     model_name=args.model_name,
                     checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
-                    checkpoint_model_path=args.checkpoint_model
+                    checkpoint_model_path=args.checkpoint_model,
+                    stability_q_mesh=getattr(args, 'stability_q_mesh', None),
+                    no_stability_metrics=getattr(args, 'no_stability_metrics', False)
                 )
         else:
             # Call the consolidated run_single_phonon_analysis function
@@ -676,11 +680,10 @@ def main():
                 max_workers=getattr(args, 'max_workers', 1),
                 model_name=args.model_name,
                 checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
-                checkpoint_model_path=args.checkpoint_model
+                checkpoint_model_path=args.checkpoint_model,
+                stability_q_mesh=getattr(args, 'stability_q_mesh', None),
+                no_stability_metrics=getattr(args, 'no_stability_metrics', False)
             )
-
-        
-    print("\n--- Phonon Calculation Script Finished ---")
 
 if __name__ == "__main__":
     main()

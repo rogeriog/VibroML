@@ -193,7 +193,7 @@ def calculate_and_save_pdos(ph, dos_grid, width, npts, output_dir, prefix, units
       traceback.print_exc()
       
    print(f"  PDOS calculation took {time.time() - start_time:.2f} s")
-def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False, max_workers=1, model_name=None, checkpoint_path=None, nep_model_path=None, checkpoint_model_path=None):
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False, max_workers=1, model_name=None, checkpoint_path=None, nep_model_path=None, checkpoint_model_path=None, stability_q_mesh=None, no_stability_metrics=False):
    """
    Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
 
@@ -385,15 +385,18 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
 
    # ── Compute validated stability metrics on uniform q-mesh ──────────────
    stability_metrics_result = None
-   try:
-      stability_metrics_result = compute_stability_metrics_from_phonons(ph)
-      print(f"\n   Stability metrics (6x6x6 mesh): "
-            f"soft_frac={stability_metrics_result['soft_frac']:.4f}, "
-            f"I_curv={stability_metrics_result['i_curv']:.4f} THz², "
-            f"Omega_inst={stability_metrics_result['omega_inst']:.4f} THz, "
-            f"classification={stability_metrics_result['classification']}")
-   except Exception as e:
-      print(f"   Warning: could not compute stability metrics ({e})")
+   if not no_stability_metrics:
+      try:
+         q_mesh = stability_q_mesh or DEFAULT_Q_MESH
+         stability_metrics_result = compute_stability_metrics_from_phonons(ph, q_mesh=q_mesh)
+         mesh_str = f"{q_mesh[0]}x{q_mesh[1]}x{q_mesh[2]}"
+         print(f"\n   Stability metrics ({mesh_str} mesh): "
+               f"soft_frac={stability_metrics_result['soft_frac']:.4f}, "
+               f"I_curv={stability_metrics_result['i_curv']:.4f} THz², "
+               f"Omega_inst={stability_metrics_result['omega_inst']:.4f} THz, "
+               f"classification={stability_metrics_result['classification']}")
+      except Exception as e:
+         print(f"   Warning: could not compute stability metrics ({e})")
 
    time_taken = time.time() - start_time
 
