@@ -920,7 +920,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
     if resume_from_checkpoint:
         start_iteration = checkpoint_state.get('main_iteration', 1)
         print(f"Resuming from main iteration {start_iteration}")
-    
+
+    main_iteration_idx = start_iteration - 1
     for main_iteration_idx in range(start_iteration, max_iterations + 1):
         print(f"\n### Starting Main Iteration {main_iteration_idx} ({ga_generations} GA generations + phonon check) ###")
         if args.constrained_supercell_growth:

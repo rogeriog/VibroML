@@ -573,8 +573,10 @@ def run_phonon_analysis_with_uq(
             "  Continuing – i-PI run may fail or return single-member output."
         )
 
-    # ── export TorchScript model ───────────────────────────────────────────────
-    model_pt = os.path.join(output_dir, f"{model_base.replace('-','_')}_{model_size}.pt")
+    # ── export TorchScript model (cached in a shared location, not per-run) ────
+    _model_cache = os.path.join(os.path.expanduser("~"), ".cache", "vibroml_pet_models")
+    os.makedirs(_model_cache, exist_ok=True)
+    model_pt = os.path.join(_model_cache, f"{model_base.replace('-','_')}_{model_size}.pt")
     if not os.path.exists(model_pt):
         print(f"\n--- Exporting PET model to TorchScript: {model_pt} ---")
         try:
@@ -649,6 +651,16 @@ def run_phonon_analysis_with_uq(
     formula = atoms.get_chemical_formula()
     color_map = {"ensemble": "tab:blue", "mean+std": "tab:blue", "spectral": None}
 
+    # Compute ensemble member frequency range for proper y-limits
+    # (the mean phonon range may cut off ensemble member curves)
+    all_member_freqs_scaled = []
+    for ph_member in ensemble.phonons:
+        seg_freqs = np.concatenate(
+            [seg.ravel() for seg in ph_member.band_structure.frequencies]
+        )
+        all_member_freqs_scaled.append(seg_freqs * freq_scale)
+    all_member_freqs_scaled = np.array(all_member_freqs_scaled)
+
     for mode in uq_plot_modes:
         fig, ax = plt.subplots(figsize=(10, 6))
         kwargs = {}
@@ -661,9 +673,80 @@ def run_phonon_analysis_with_uq(
             print(f"   Warning: plot mode '{mode}' failed ({exc}); skipping.")
             plt.close(fig)
             continue
+
+        # For mean+std mode: add 2σ band in light green on top of the 1σ band
+        if mode == "mean+std":
+            from uqphonon._plot import _stack_frequencies, _get_unit_factor
+            scale_2s = _get_unit_factor(uq_unit)
+            freq_stack = _stack_frequencies(ensemble.phonons)
+            bs = ensemble.mean_phonon.band_structure
+            for seg_idx, (dist, mean_freq, conn) in enumerate(
+                zip(bs.distances, bs.frequencies, bs.path_connections)
+            ):
+                seg_freqs = freq_stack[seg_idx]  # (n_ensemble, n_qpts, n_bands)
+                mean_f = seg_freqs.mean(axis=0) * scale_2s  # (n_qpts, n_bands)
+                std_f = seg_freqs.std(axis=0) * scale_2s  # (n_qpts, n_bands)
+                for band_idx in range(mean_f.shape[1]):
+                    # 2σ band in light green (drawn first, behind 1σ)
+                    ax.fill_between(
+                        dist,
+                        mean_f[:, band_idx] - 2 * std_f[:, band_idx],
+                        mean_f[:, band_idx] + 2 * std_f[:, band_idx],
+                        color="tab:green",
+                        alpha=0.12,
+                        lw=0,
+                        zorder=0,
+                    )
+
+        # y-limits: use ensemble member range (not just mean) to avoid cutting curves
+        y_min = float(all_member_freqs_scaled.min())
+        y_max = float(all_member_freqs_scaled.max())
+        margin = 0.15 * (y_max - y_min if y_max > y_min else abs(y_min))
+        ax.set_ylim(y_min - margin, y_max + margin)
         if bsmin < -0.1:
             ax.axhline(0, color="k", lw=0.8, ls="--")
-        title_mode = mode.replace("+", " ± ") if mode == "mean+std" else mode
+
+        # ── y-axis ticks and grid ──────────────────────────────────────────────
+        # Add dense minor ticks (unlabeled) and major ticks (labeled) with
+        # fine horizontal gray grid lines at major tick positions to help
+        # track curve frequencies across the band structure.
+        y_range = y_max - y_min + 2 * margin
+        # Choose a nice major tick step (aim for ~8-12 major ticks)
+        raw_step = y_range / 10
+        # Round to a nice number: 1, 2, 5, 10, 20, 50, ...
+        magnitude = 10 ** np.floor(np.log10(raw_step))
+        for nice in [1, 2, 5, 10]:
+            if nice * magnitude >= raw_step:
+                major_step = nice * magnitude
+                break
+        else:
+            major_step = 10 * magnitude
+        minor_step = major_step / 5  # 5 minor ticks per major
+
+        # Set major and minor ticks
+        import matplotlib.ticker as mticker
+        ax.yaxis.set_major_locator(mticker.MultipleLocator(major_step))
+        ax.yaxis.set_minor_locator(mticker.MultipleLocator(minor_step))
+        # Major tick labels: format to remove excessive decimals
+        if major_step >= 1:
+            ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f"))
+        elif major_step >= 0.1:
+            ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f"))
+        else:
+            ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
+
+        # Grid: fine horizontal gray lines at major ticks, very light at minor
+        ax.yaxis.grid(True, which="major", color="gray", linewidth=0.5,
+                      alpha=0.5, linestyle="-")
+        ax.yaxis.grid(True, which="minor", color="lightgray", linewidth=0.3,
+                      alpha=0.3, linestyle="-")
+        ax.tick_params(which="both", direction="in", top=True, right=True)
+
+        # Title with std annotation
+        if mode == "mean+std":
+            title_mode = "mean ± std (±2σ)"
+        else:
+            title_mode = mode
         ax.set_title(f"{formula} — {model_name} ({title_mode})")
         plt.tight_layout()
         safe_mode = mode.replace("+", "plus").replace(" ", "_")
@@ -674,6 +757,50 @@ def run_phonon_analysis_with_uq(
 
     # ── text summary ──────────────────────────────────────────────────────────
     time_taken = time.time() - start_time
+
+    # ── extract per-q-point mean ± std for downstream analysis ────────────────
+    # uqphonon's PhononEnsemble exposes .phonons (list of Phonopy per member)
+    # and .mean_phonon (Phonopy from mean forces), but no pre-computed std.
+    # Compute std from the individual ensemble member frequencies.
+    member_freqs = []
+    for ph_member in ensemble.phonons:
+        seg_freqs = np.concatenate(
+            [seg.ravel() for seg in ph_member.band_structure.frequencies]
+        )
+        member_freqs.append(seg_freqs)
+    member_freqs = np.array(member_freqs)  # shape (n_ens, n_qpoints * n_bands)
+    all_std_thz = member_freqs.std(axis=0)
+    max_std = float(all_std_thz.max()) * freq_scale
+    # Find the std at the q-point where the mean is most negative
+    min_idx = np.argmin(all_freqs_thz)
+    std_at_min = float(all_std_thz.ravel()[min_idx]) * freq_scale
+
+    # Save raw frequency data (mean + std per q-point per band) as npz
+    npz_path = os.path.join(output_dir, f"{prefix}_phonon_uq_data.npz")
+    try:
+        mean_freqs_list = [seg for seg in mean_ph.band_structure.frequencies]
+        # Reconstruct per-segment std from the flattened array
+        std_freqs_list = []
+        offset = 0
+        for seg in mean_ph.band_structure.frequencies:
+            n = seg.ravel().shape[0]
+            std_seg = all_std_thz[offset:offset + n].reshape(seg.shape)
+            std_freqs_list.append(std_seg)
+            offset += n
+        np.savez_compressed(
+            npz_path,
+            mean_freqs=mean_freqs_list,
+            std_freqs=std_freqs_list,
+            units=units,
+            formula=formula,
+            n_atoms=len(atoms),
+            supercell=sc,
+            n_ensemble=n_ens,
+        )
+        print(f"   UQ data saved: {npz_path}")
+    except Exception as exc:
+        print(f"   Warning: could not save npz data ({exc})")
+
     summary_path = os.path.join(output_dir, f"{prefix}_phonon_uq_summary.txt")
     with open(summary_path, "w") as fh:
         fh.write("--- Phonon UQ Run Summary ---\n")
@@ -687,11 +814,14 @@ def run_phonon_analysis_with_uq(
         fh.write(f"Displacements: {n_disp}\n")
         fh.write(f"Atoms per supercell: {n_at}\n")
         fh.write(f"Most negative mean frequency: {bsmin:.4f} {units}\n")
+        fh.write(f"Max std across all q-points: {max_std:.4f} {units}\n")
+        fh.write(f"Std at min-frequency q-point: {std_at_min:.4f} {units}\n")
+        fh.write(f"Min freq minus 3*std: {(bsmin - 3*std_at_min):.4f} {units}\n")
         stable_threshold = -0.1  # THz — below this is a genuine imaginary mode
         fh.write(f"Dynamically stable: {'Yes' if bsmin > stable_threshold else 'No (imaginary modes present)'}\n")
         fh.write(f"Time taken: {time_taken:.2f} s\n")
     print(f"   UQ summary saved: {summary_path}")
-    print(f"\n» Phonon UQ done in {time_taken:.2f} s  |  min freq = {bsmin:.4f} {units}")
+    print(f"\n» Phonon UQ done in {time_taken:.2f} s  |  min freq = {bsmin:.4f} {units}  |  max std = {max_std:.4f} {units}")
 
     # Compatible return with run_single_phonon_analysis
     return [], bsmin, time_taken, {}
