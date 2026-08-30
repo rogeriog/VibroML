@@ -14,6 +14,13 @@ from ase.io import read, write
 from ase.atoms import Atoms
 from ase.build import make_supercell
 from ase.dft.kpoints import monkhorst_pack
+from vibroml.utils.stability_metrics import (
+    compute_all_metrics,
+    classify_stability,
+    SOFT_FRAC_STABLE_MAX,
+    SOFT_FRAC_UNSTABLE_MIN,
+    DEFAULT_Q_MESH,
+)
 # --- START FIX: Handle older ASE versions missing ase.spectrum.dos ---
 try:
     from ase.spectrum.dos import DOS
@@ -56,6 +63,44 @@ from .plotting_utils import plot_phonon_results, plot_pdos
 from .utils import save_raw_data
 from .genetic_algorithm import GeneticAlgorithm
 from .structure_utils import estimate_commensurate_supercell_size
+
+
+def compute_stability_metrics_from_phonons(
+    ph,
+    q_mesh=DEFAULT_Q_MESH,
+):
+    """Compute validated stability metrics (soft_frac, I_curv) on a uniform q-mesh.
+
+    This is the canonical entry point for stability classification within
+    VibroML.  It uses the same thresholds and metric definitions as
+    ``vibroml.utils.stability_metrics`` (the single source of truth).
+
+    Parameters
+    ----------
+    ph : ase.phonons.Phonons
+        ASE Phonons object (already run and read).
+    q_mesh : tuple of int, default (6, 6, 6)
+        Uniform q-point mesh for frequency evaluation.
+
+    Returns
+    -------
+    dict
+        Keys: soft_frac, i_curv, omega_inst, omega_min, classification,
+        n_modes, n_imag, n_excluded, q_mesh.
+    """
+    qpoints = monkhorst_pack(q_mesh)
+    energies_eV = ph.band_structure(qpoints, modes=False, verbose=False)
+    freqs_THz = energies_eV / EV_TO_THZ_FACTOR
+
+    # Gamma indices
+    gamma_mask = np.all(np.abs(qpoints) < 1e-10, axis=1)
+    gamma_indices = np.where(gamma_mask)[0]
+
+    metrics = compute_all_metrics(freqs_THz, gamma_indices=gamma_indices)
+    metrics["q_mesh"] = list(q_mesh)
+    return metrics
+
+
 def calculate_and_save_pdos(ph, dos_grid, width, npts, output_dir, prefix, units, conversion_divisor, struct_formula):
    """
    Calculates Projected Density of States (PDOS) for phonons and saves to JSON.
@@ -337,6 +382,19 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
       ph, path, bs_energies, special_k_point_distances, special_k_point_labels, units, output_dir, prefix, traj_kT=traj_kT, num_modes_to_return=num_modes_to_return,
       target_q_point=q_point_for_specific_mode, target_band_idx=band_idx_for_specific_mode, displacement_magnitude=displacement_magnitude, negative_phonon_threshold=negative_phonon_threshold
    )
+
+   # ── Compute validated stability metrics on uniform q-mesh ──────────────
+   stability_metrics_result = None
+   try:
+      stability_metrics_result = compute_stability_metrics_from_phonons(ph)
+      print(f"\n   Stability metrics (6x6x6 mesh): "
+            f"soft_frac={stability_metrics_result['soft_frac']:.4f}, "
+            f"I_curv={stability_metrics_result['i_curv']:.4f} THz², "
+            f"Omega_inst={stability_metrics_result['omega_inst']:.4f} THz, "
+            f"classification={stability_metrics_result['classification']}")
+   except Exception as e:
+      print(f"   Warning: could not compute stability metrics ({e})")
+
    time_taken = time.time() - start_time
 
    summary_filename = os.path.join(output_dir, f"{prefix}_phonon_run_summary.txt")
@@ -346,11 +404,23 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
       f.write(f"Total Number of Atoms: {len(atoms)}\n")
       f.write(f"Engine Used: {engine}\n")
       f.write(f"Units: {units}\n")
-      supercell_str = f"({supercell_dims[0]}, {supercell_dims[1]}, {supercell_dims[2]})" if isinstance(supercell_dims, (list, tuple)) else f"({supercell_dims}, {supercell_dims}, {supercell_dims})"  
+      supercell_str = f"({supercell_dims[0]}, {supercell_dims[1]}, {supercell_dims[2]})" if isinstance(supercell_dims, (list, tuple)) else f"({supercell_dims}, {supercell_dims}, {supercell_dims})"
       f.write(f"Supercell Size: {supercell_str}\n")
       f.write(f"Displacement Delta: {delta}\n")
       f.write(f"Fmax for Relaxation: {fmax}\n")
       f.write(f"Most Negative Frequency (overall): {bsmin:.4f} {units}\n")
+      if stability_metrics_result is not None:
+         f.write(f"\n--- Validated Stability Metrics (uniform {stability_metrics_result['q_mesh'][0]}x{stability_metrics_result['q_mesh'][1]}x{stability_metrics_result['q_mesh'][2]} mesh) ---\n")
+         f.write(f"Soft-mode fraction (soft_frac): {stability_metrics_result['soft_frac']:.6f}\n")
+         f.write(f"I_curv (p=1): {stability_metrics_result['i_curv']:.6f} THz²\n")
+         f.write(f"Omega_inst (sqrt(I_curv)): {stability_metrics_result['omega_inst']:.6f} THz\n")
+         f.write(f"Classification: {stability_metrics_result['classification']}\n")
+         f.write(f"  (Stable: soft_frac < {SOFT_FRAC_STABLE_MAX}, "
+                f"Quasi-Stable: {SOFT_FRAC_STABLE_MAX} <= soft_frac < {SOFT_FRAC_UNSTABLE_MIN}, "
+                f"Unstable: soft_frac >= {SOFT_FRAC_UNSTABLE_MIN})\n")
+         f.write(f"Modes: {stability_metrics_result['n_modes']} total, "
+                f"{stability_metrics_result['n_imag']} imaginary, "
+                f"{stability_metrics_result['n_excluded']} excluded (Gamma acoustic)\n")
       f.write(f"Time Taken for Phonon Analysis: {time_taken:.2f} seconds\n\n")
       try:
          energy = atoms.get_potential_energy()
