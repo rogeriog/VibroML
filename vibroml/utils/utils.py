@@ -474,17 +474,19 @@ def get_arg_parser_and_settings():
                         metavar=('NX', 'NY', 'NZ'),
                         help='Q-mesh for validated stability metrics (soft_frac, I_curv). '
                              'Default: (6,6,6). The metrics are computed on a uniform Monkhorst-Pack mesh '
-                             'with 3 Gamma acoustic modes excluded by index.')
+                             'with 3 Gamma acoustic modes excluded by index. '
+                             'Overrides --stability-q-mesh-mode when specified.')
+    parser.add_argument('--stability-q-mesh-mode', type=str, default='fixed',
+                        choices=['fixed', 'adaptive'],
+                        help='Q-mesh selection mode for stability metrics. '
+                             '"fixed": use the uniform (6,6,6) Monkhorst-Pack grid (default, used in the paper). '
+                             '"adaptive": compute a density-based mesh targeting a maximum q-spacing of '
+                             '0.30 1/Å with a floor of (6,6,6), giving ~8x8x8 for small cells and '
+                             '6x6x6 for larger cells. Ignored when --stability-q-mesh is specified.')
     parser.add_argument('--no-stability-metrics', action='store_true', default=False,
-                        help='Disable computation of validated stability metrics (soft_frac, I_curv, '
-                             'classification). By default, these are computed alongside the phonon '
+                        help='Disable computation of stability metrics (soft_frac, I_curv). '
+                             'By default, these are computed alongside the phonon '
                              'band structure and reported in the output.')
-    parser.add_argument('--stability-thresholds', type=str, default=None,
-                        metavar='STABLE,UNSTABLE',
-                        help='Custom soft_frac thresholds for classification. '
-                             'Format: "stable_max,unstable_min" (e.g., "0.02,0.08"). '
-                             'Default: 0.02 (Stable < 2%%), 0.08 (Unstable >= 8%%). '
-                             'WARNING: changing these invalidates the validated criterion.')
 
     return parser, settings
 

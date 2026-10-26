@@ -38,3 +38,5 @@ VibroML_Technical_Report.md
 build/
 vibroml.egg-info/
 dist/
+b2_metrics_*/
+fairchem_models/

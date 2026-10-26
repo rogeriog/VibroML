@@ -2,10 +2,12 @@
 
 Verifies:
   - Gamma acoustic exclusion (exactly 3 modes per Gamma point, nothing else)
-  - All-positive spectrum → I_curv=0, soft_frac=0, "Stable"
-  - Tier boundaries at exactly 0.02 and 0.08
-  - I_curv invariance to mode ordering
-  - AC2: thresholds used in LaTeX table captions match module constants
+  - All-positive spectrum → I_curv=0, soft_frac=0
+  - I_curv invariance to mode ordering and q-point ordering
+  - p-generalization behavior
+  - Empty-spectrum edge case
+  - AC2: table captions do not contain the superseded -1.5 THz heuristic
+    or categorical tier labels
 """
 
 import numpy as np
@@ -14,13 +16,13 @@ import re
 import os
 
 from vibroml.utils.stability_metrics import (
-    SOFT_FRAC_STABLE_MAX,
-    SOFT_FRAC_UNSTABLE_MIN,
     DEFAULT_Q_MESH,
-    classify_stability,
+    ADAPTIVE_Q_DENSITY,
+    ADAPTIVE_Q_FLOOR,
     compute_soft_fraction,
     compute_i_curv,
     compute_all_metrics,
+    compute_adaptive_q_mesh,
     _build_exclusion_mask,
 )
 
@@ -63,83 +65,150 @@ def all_negative_spectrum():
 
 
 # ============================================================================
-# AC2: Paper/code threshold consistency
+# AC2: Paper/code consistency — tables must not contain tier labels or -1.5 THz
 # ============================================================================
 
-class TestThresholdConsistency:
-    """AC2 — thresholds in code must match thresholds in LaTeX table captions."""
+def _paper_table(name):
+    """Absolute path to a LaTeX table in the paper tree.
 
-    def test_table_s1_caption_matches_constants(self):
-        """Parse Table S1 caption and verify thresholds match module constants."""
-        table_path = os.path.join(
-            os.path.dirname(__file__), "..",
-            "..", "..", "..", "..", "..",
-            "03_paper_and_rebuttal", "VIBROML_PAPER", "tables",
-            "TableS1_fullcomp_MLIPs_phonon_evals.tex"
-        )
+    tests/ lives at  <root>/01_codebase/VibroML/tests/, and the paper at
+    <root>/03_paper_and_rebuttal/, so we go up exactly THREE levels.
+    (A previous version used six levels, which escaped the workspace and made
+    these tests skip silently -- hiding a real paper/code mismatch.)
+    """
+    root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    return os.path.join(root, "03_paper_and_rebuttal", "VIBROML_PAPER",
+                        "tables", name)
+
+
+class TestTableConsistency:
+    """AC2 — table captions must not contain superseded heuristics or tier labels."""
+
+    def test_table_s1_no_tier_labels(self):
+        """Table S1 caption must not contain tier labels or -1.5 THz."""
+        table_path = _paper_table("TableS1_fullcomp_MLIPs_phonon_evals.tex")
         if not os.path.exists(table_path):
             pytest.skip(f"Table S1 not found at {table_path}")
 
         with open(table_path) as f:
             content = f.read()
 
-        # Check that the caption references the correct thresholds
-        # The caption should contain 0.02 (or 2%) and 0.08 (or 8%)
-        # This test will be updated when the table is regenerated
-        assert "0.02" in content or "2\\%" in content, \
-            "Table S1 must reference the 2% stable/quasi boundary"
+        assert "-1.5" not in content, (
+            "Table S1 still contains the superseded '-1.5 THz' heuristic.")
+        assert "Quasi-Stable" not in content, (
+            "Table S1 still contains 'Quasi-Stable' tier label.")
+        # The \\stb, \\qst, \\ust macros should not appear
+        assert r"\stb" not in content, (
+            "Table S1 still uses the \\stb stability-label macro.")
+        assert r"\qst" not in content, (
+            "Table S1 still uses the \\qst stability-label macro.")
+        assert r"\ust" not in content, (
+            "Table S1 still uses the \\ust stability-label macro.")
 
-    def test_table1_caption_matches_constants(self):
-        """Parse Table 1 caption and verify thresholds match module constants."""
-        table_path = os.path.join(
-            os.path.dirname(__file__), "..",
-            "..", "..", "..", "..", "..",
-            "03_paper_and_rebuttal", "VIBROML_PAPER", "tables",
-            "table1_stability_remediation.tex"
-        )
+    def test_table1_no_tier_labels(self):
+        """Table 1 caption must not contain tier labels or -1.5 THz."""
+        table_path = _paper_table("table1_stability_remediation.tex")
         if not os.path.exists(table_path):
             pytest.skip(f"Table 1 not found at {table_path}")
 
         with open(table_path) as f:
             content = f.read()
 
-        # The caption should reference the correct thresholds
-        assert "0.02" in content or "2\\%" in content, \
-            "Table 1 must reference the 2% stable/quasi boundary"
+        assert "-1.5" not in content, (
+            "Table 1 still contains the superseded '-1.5 THz' heuristic.")
+        assert "Quasi-Stable" not in content, (
+            "Table 1 still contains 'Quasi-Stable' tier label.")
+        assert r"\stb" not in content, (
+            "Table 1 still uses the \\stb stability-label macro.")
+        assert r"\qst" not in content, (
+            "Table 1 still uses the \\qst stability-label macro.")
+        assert r"\ust" not in content, (
+            "Table 1 still uses the \\ust stability-label macro.")
 
-    def test_constants_are_correct_values(self):
-        """Verify the threshold constants have the expected values."""
-        assert SOFT_FRAC_STABLE_MAX == 0.02
-        assert SOFT_FRAC_UNSTABLE_MIN == 0.08
+    def test_default_q_mesh(self):
+        """Verify the default q-mesh constant."""
         assert DEFAULT_Q_MESH == (6, 6, 6)
 
 
 # ============================================================================
-# Classification tests
+# Adaptive q-mesh
 # ============================================================================
 
-class TestClassifyStability:
+class TestAdaptiveQMesh:
+    """Tests for compute_adaptive_q_mesh."""
 
-    def test_stable_below_2pct(self):
-        assert classify_stability(0.0) == "Stable"
-        assert classify_stability(0.01) == "Stable"
-        assert classify_stability(0.019) == "Stable"
+    def test_cubic_lif_above_floor(self):
+        """LiF (a~2.56 Å) should get a mesh above the 6x6x6 floor."""
+        mesh = compute_adaptive_q_mesh([2.560, 2.560, 2.560])
+        assert mesh[0] > 6
+        assert mesh == (mesh[0],) * 3  # cubic -> isotropic mesh
 
-    def test_quasi_between_2_and_8pct(self):
-        assert classify_stability(0.02) == "Quasi-Stable"
-        assert classify_stability(0.05) == "Quasi-Stable"
-        assert classify_stability(0.079) == "Quasi-Stable"
+    def test_cubic_cspbi3_at_floor(self):
+        """CsPbI3 (a~6.39 Å) should hit the 6x6x6 floor."""
+        mesh = compute_adaptive_q_mesh([6.387, 6.387, 6.387])
+        assert mesh == (6, 6, 6)
 
-    def test_unstable_at_8pct_and_above(self):
-        assert classify_stability(0.08) == "Unstable"
-        assert classify_stability(0.20) == "Unstable"
-        assert classify_stability(1.0) == "Unstable"
+    def test_cubic_hfo2_at_floor(self):
+        """HfO2 (a~5.05 Å) should hit the 6x6x6 floor."""
+        mesh = compute_adaptive_q_mesh([5.050, 5.050, 5.050])
+        assert mesh == (6, 6, 6)
 
-    def test_boundary_exactness(self):
-        """Boundaries are >= for the upper tier, >= for quasi lower tier."""
-        assert classify_stability(0.02) == "Quasi-Stable"  # exactly 2%
-        assert classify_stability(0.08) == "Unstable"      # exactly 8%
-        assert classify_stability(0.0199) == "Stable"      # just below 2%
+    def test_cubic_bi2sn2o7_at_floor(self):
+        """Bi2Sn2O7 (a~10.73 Å) should hit the 6x6x6 floor."""
+        mesh = compute_adaptive_q_mesh([10.733, 10.733, 10.733])
+        assert mesh == (6, 6, 6)
+
+    def test_very_small_cell_exceeds_floor(self):
+        """A very small cell (a=1.0 Å) should get a large mesh."""
+        mesh = compute_adaptive_q_mesh([1.0, 1.0, 1.0])
+        n_expected = int(np.ceil(2 * np.pi / (1.0 * ADAPTIVE_Q_DENSITY)))
+        assert mesh == (n_expected, n_expected, n_expected)
+        assert mesh[0] > 6
+
+    def test_very_large_cell_at_floor(self):
+        """A very large cell (a=50 Å) should hit the floor."""
+        mesh = compute_adaptive_q_mesh([50.0, 50.0, 50.0])
+        assert mesh == (6, 6, 6)
+
+    def test_anisotropic_cell(self):
+        """Anisotropic cell lengths should give direction-dependent mesh."""
+        # a=2.56 (above floor), b=10.0 (floor), c=5.0 (floor)
+        mesh = compute_adaptive_q_mesh([2.560, 10.0, 5.0])
+        assert mesh[0] > 6
+        assert mesh[1] == 6
+        assert mesh[2] == 6
+
+    def test_general_cell_matrix(self):
+        """A 3x3 cell matrix (cubic) should match the 1-D form."""
+        a = 2.560
+        cell_3x3 = np.diag([a, a, a])
+        mesh_3x3 = compute_adaptive_q_mesh(cell_3x3)
+        mesh_1d = compute_adaptive_q_mesh([a, a, a])
+        assert mesh_3x3 == mesh_1d
+
+    def test_custom_target_dq(self):
+        """A denser target should give a larger mesh."""
+        mesh_default = compute_adaptive_q_mesh([2.560, 2.560, 2.560])
+        mesh_dense = compute_adaptive_q_mesh([2.560, 2.560, 2.560], target_dq=0.05)
+        assert mesh_dense[0] > mesh_default[0]
+
+    def test_custom_floor(self):
+        """A higher floor should override the density calculation."""
+        mesh = compute_adaptive_q_mesh([10.0, 10.0, 10.0], floor=(8, 8, 8))
+        assert mesh == (8, 8, 8)
+
+    def test_adaptive_constants(self):
+        """Verify the adaptive constants."""
+        assert ADAPTIVE_Q_DENSITY == 0.30
+        assert ADAPTIVE_Q_FLOOR == (6, 6, 6)
+
+    def test_q_spacing_within_target(self):
+        """For meshes above the floor, q-spacing should not exceed target."""
+        a = 2.560
+        mesh = compute_adaptive_q_mesh([a, a, a])
+        dq = 2 * np.pi / (a * mesh[0])
+        assert dq <= ADAPTIVE_Q_DENSITY + 1e-10
 
 
 # ============================================================================
@@ -260,11 +329,11 @@ class TestICurv:
 
 class TestComputeAllMetrics:
 
-    def test_returns_classification(self, mixed_spectrum):
+    def test_no_classification_key(self, mixed_spectrum):
+        """compute_all_metrics must not return a 'classification' key."""
         freqs, gamma_idx = mixed_spectrum
         result = compute_all_metrics(freqs, gamma_idx)
-        assert "classification" in result
-        assert result["classification"] in ["Stable", "Quasi-Stable", "Unstable"]
+        assert "classification" not in result
 
     def test_includes_p_sweep(self, mixed_spectrum):
         freqs, gamma_idx = mixed_spectrum

@@ -1,91 +1,100 @@
-"""Stability metrics for MLIP-driven phonon screening.
+r"""Stability metrics for MLIP-driven phonon screening.
 
-This module is the **single source of truth** for the dynamical stability
-classification criterion and the continuous instability descriptor
-(:math:`I_\\mathrm{curv}`) used in VibroML.
+This module provides the canonical implementation of the continuous
+stability descriptors used in VibroML:
 
-The criterion is a three-tier classification based solely on the
-**soft-mode fraction** (``soft_frac``), defined as the fraction of
-phonon modes with imaginary frequency on a uniform q-point mesh::
+- **soft-mode fraction** (``soft_frac``): the fraction of phonon modes
+  with imaginary frequency on a uniform q-point mesh.  Dimensionless
+  and mass-independent.
+- **mean negative curvature** (:math:`I_\\mathrm{curv}`): the normalised
+  mean of :math:`\\omega^2` over imaginary modes, providing a severity
+  scale in THz\ :sup:`2`.
 
-    Stable         soft_frac <  0.02   (2%)
-    Quasi-Stable   0.02 <= soft_frac < 0.08   (8%)
-    Unstable       soft_frac >= 0.08
-
-The soft-mode fraction is **dimensionless** and therefore mass-independent,
-making the criterion transferable across systems with different atomic masses.
-
-The continuous descriptor :math:`I_\\mathrm{curv}` is the normalised mean
-negative curvature of the potential energy surface::
-
-    I_curv = (1/M) * sum_i max(0, -omega_i^2)     [THz^2]
-
-where M is the total number of vibrational modes on the uniform mesh
-(excluding the 3 acoustic modes at Gamma) and the sum runs over all
-negative-frequency modes.  Equivalently::
-
-    I_curv = Tr(D_-) / (3N)
-
-where ``D_-`` is the negative-curvature part of the mass-weighted dynamical
-matrix and N is the number of atoms in the primitive cell.
-
-The characteristic instability frequency is::
-
-    Omega_inst = sqrt(I_curv)     [THz]
+These are reported as continuous descriptors; no categorical stability
+labels or hard thresholds are imposed, because dynamical stability is a
+continuous property whose actionable boundary depends on the downstream
+application.
 
 Only the 3 acoustic modes at the Gamma point are excluded (by q-point/mode
 index).  **No frequency threshold is applied** — the only boundary is
 :math:`\\lambda = 0` (i.e. :math:`\\omega = 0`).
 """
 
+import math
 import numpy as np
-from typing import Optional, Dict, List, Tuple
-
-# ============================================================================
-# THRESHOLDS — single source of truth
-# ============================================================================
-# These constants are imported by tests/test_stability_metrics.py which
-# enforces that the LaTeX table captions use the same values (AC2).
-# Do NOT change these without updating the manuscript table captions.
-
-SOFT_FRAC_STABLE_MAX = 0.02    # < 2%  → Stable
-SOFT_FRAC_UNSTABLE_MIN = 0.08  # >= 8% → Unstable
+from typing import Optional, Dict, List, Tuple, Union
 
 DEFAULT_Q_MESH: Tuple[int, int, int] = (6, 6, 6)
 
+# Adaptive q-mesh parameters
+# Target maximum q-point spacing of 0.30 1/Å along each reciprocal direction,
+# with a minimum mesh of 6x6x6.  This was found as a good computational
+# compromise: it gives ~8x8x8 for small cells (e.g. LiF, a~2.56 Å) while
+# keeping 6x6x6 for larger cells, consistent with the convergence sweep
+# performed on the four benchmark aristotypes (LiF, CsPbI3, HfO2, Bi2Sn2O7).
+ADAPTIVE_Q_DENSITY: float = 0.30  # 1/Å
+ADAPTIVE_Q_FLOOR: Tuple[int, int, int] = (6, 6, 6)
 
-# ============================================================================
-# Classification
-# ============================================================================
 
-def classify_stability(soft_frac: float, stable_max: float = None, unstable_min: float = None) -> str:
-    """Classify a structure into Stable / Quasi-Stable / Unstable.
+def compute_adaptive_q_mesh(
+    cell: Union[np.ndarray, Tuple[float, ...], List[float]],
+    target_dq: float = ADAPTIVE_Q_DENSITY,
+    floor: Tuple[int, int, int] = ADAPTIVE_Q_FLOOR,
+) -> Tuple[int, int, int]:
+    """Compute a density-based q-point mesh with a minimum floor.
+
+    Chooses Monkhorst-Pack mesh dimensions so that the q-point spacing
+    along each reciprocal direction does not exceed ``target_dq``,
+    while enforcing a minimum mesh size via ``floor``.
+
+    For a cubic cell with lattice constant *a*, an ``N×N×N`` grid has
+    spacing ``Δq ≈ 2π/(aN)``.  At ``target_dq = 0.30 1/Å``:
+
+    - LiF  (a ≈ 2.56 Å) → ~8×8×8  (above the floor)
+    - HfO2 (a ≈ 5.05 Å) → 6×6×6  (at the floor)
+    - CsPbI3 (a ≈ 6.39 Å) → 6×6×6 (at the floor)
+    - Bi2Sn2O7 (a ≈ 10.73 Å) → 6×6×6 (at the floor)
 
     Parameters
     ----------
-    soft_frac : float
-        Fraction of imaginary phonon modes on a uniform q-point mesh
-        (3 Gamma acoustic modes excluded).
-    stable_max : float, optional
-        Upper bound for Stable classification. Defaults to
-        ``SOFT_FRAC_STABLE_MAX`` (0.02).
-    unstable_min : float, optional
-        Lower bound for Unstable classification. Defaults to
-        ``SOFT_FRAC_UNSTABLE_MIN`` (0.08).
+    cell : array-like, shape (3,) or (3, 3)
+        Real-space cell.  If 1-D, interpreted as orthogonal cell lengths
+        [a, b, c] in Å.  If 2-D, interpreted as cell vectors (rows) in Å.
+    target_dq : float, default 0.15
+        Target maximum q-point spacing in 1/Å along each reciprocal
+        lattice direction.
+    floor : tuple of int, default (6, 6, 6)
+        Minimum mesh dimensions.
 
     Returns
     -------
-    str
-        ``"Stable"``, ``"Quasi-Stable"``, or ``"Unstable"``.
+    tuple of int
+        Monkhorst-Pack mesh dimensions (N1, N2, N3).
     """
-    s_max = stable_max if stable_max is not None else SOFT_FRAC_STABLE_MAX
-    u_min = unstable_min if unstable_min is not None else SOFT_FRAC_UNSTABLE_MIN
-    if soft_frac >= u_min:
-        return "Unstable"
-    elif soft_frac >= s_max:
-        return "Quasi-Stable"
+    cell = np.asarray(cell, dtype=float)
+    if cell.ndim == 1:
+        # Orthogonal cell — cell lengths
+        b_lengths = 2.0 * np.pi / cell
     else:
-        return "Stable"
+        # General cell — 3x3 matrix of cell vectors (rows)
+        a1, a2, a3 = cell
+        volume = abs(np.dot(a1, np.cross(a2, a3)))
+        if volume < 1e-12:
+            raise ValueError("Degenerate cell (zero volume)")
+        b1 = np.cross(a2, a3)
+        b2 = np.cross(a3, a1)
+        b3 = np.cross(a1, a2)
+        b_lengths = 2.0 * np.pi * np.array([
+            np.linalg.norm(b1),
+            np.linalg.norm(b2),
+            np.linalg.norm(b3),
+        ]) / volume
+
+    mesh = []
+    for b_len, f in zip(b_lengths, floor):
+        n = max(f, int(math.ceil(b_len / target_dq)))
+        mesh.append(n)
+    return tuple(mesh)
 
 
 # ============================================================================
@@ -220,7 +229,7 @@ def compute_all_metrics(
     """Compute all stability metrics in one call.
 
     Returns a dict with:
-        - soft_frac, omega_min, classification
+        - soft_frac, omega_min
         - i_curv (p=1), omega_inst
         - i_p / omega_p for each requested p value
         - n_modes, n_imag, n_excluded
@@ -230,14 +239,12 @@ def compute_all_metrics(
 
     # Core metrics at p=1
     result = compute_i_curv(freqs_THz, gamma_indices, p=1.0)
-    classification = classify_stability(result["soft_frac"])
 
     out = {
         "soft_frac": result["soft_frac"],
         "omega_min": result["omega_min"],
         "i_curv": result["i_curv"],
         "omega_inst": result["omega_inst"],
-        "classification": classification,
         "n_modes": result["n_modes"],
         "n_imag": result["n_imag"],
         "n_excluded": result["n_excluded"],

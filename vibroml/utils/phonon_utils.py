@@ -16,9 +16,7 @@ from ase.build import make_supercell
 from ase.dft.kpoints import monkhorst_pack
 from vibroml.utils.stability_metrics import (
     compute_all_metrics,
-    classify_stability,
-    SOFT_FRAC_STABLE_MAX,
-    SOFT_FRAC_UNSTABLE_MIN,
+    compute_adaptive_q_mesh,
     DEFAULT_Q_MESH,
 )
 # --- START FIX: Handle older ASE versions missing ase.spectrum.dos ---
@@ -68,26 +66,37 @@ from .structure_utils import estimate_commensurate_supercell_size
 def compute_stability_metrics_from_phonons(
     ph,
     q_mesh=DEFAULT_Q_MESH,
+    q_mesh_mode="fixed",
 ):
     """Compute validated stability metrics (soft_frac, I_curv) on a uniform q-mesh.
 
-    This is the canonical entry point for stability classification within
-    VibroML.  It uses the same thresholds and metric definitions as
-    ``vibroml.utils.stability_metrics`` (the single source of truth).
+    This is the canonical entry point for stability metric computation within
+    VibroML.  It uses the same metric definitions as
+    ``vibroml.utils.stability_metrics``.
 
     Parameters
     ----------
     ph : ase.phonons.Phonons
         ASE Phonons object (already run and read).
     q_mesh : tuple of int, default (6, 6, 6)
-        Uniform q-point mesh for frequency evaluation.
+        Uniform q-point mesh for frequency evaluation.  Ignored when
+        ``q_mesh_mode="adaptive"``.
+    q_mesh_mode : str, default "fixed"
+        ``"fixed"``: use the supplied ``q_mesh``.
+        ``"adaptive"``: compute a density-based mesh from the primitive cell
+        stored in ``ph.atoms``, targeting a maximum q-spacing of 0.15 1/Å
+        with a floor of (6, 6, 6).
 
     Returns
     -------
     dict
-        Keys: soft_frac, i_curv, omega_inst, omega_min, classification,
+        Keys: soft_frac, i_curv, omega_inst, omega_min,
         n_modes, n_imag, n_excluded, q_mesh.
     """
+    if q_mesh_mode == "adaptive":
+        cell = np.asarray(ph.atoms.cell)
+        q_mesh = compute_adaptive_q_mesh(cell)
+
     qpoints = monkhorst_pack(q_mesh)
     energies_eV = ph.band_structure(qpoints, modes=False, verbose=False)
     freqs_THz = energies_eV / EV_TO_THZ_FACTOR
@@ -98,6 +107,7 @@ def compute_stability_metrics_from_phonons(
 
     metrics = compute_all_metrics(freqs_THz, gamma_indices=gamma_indices)
     metrics["q_mesh"] = list(q_mesh)
+    metrics["q_mesh_mode"] = q_mesh_mode
     return metrics
 
 
@@ -193,7 +203,7 @@ def calculate_and_save_pdos(ph, dos_grid, width, npts, output_dir, prefix, units
       traceback.print_exc()
       
    print(f"  PDOS calculation took {time.time() - start_time:.2f} s")
-def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False, max_workers=1, model_name=None, checkpoint_path=None, nep_model_path=None, checkpoint_model_path=None, stability_q_mesh=None, no_stability_metrics=False):
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False, max_workers=1, model_name=None, checkpoint_path=None, nep_model_path=None, checkpoint_model_path=None, stability_q_mesh=None, stability_q_mesh_mode="fixed", no_stability_metrics=False):
    """
    Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
 
@@ -387,14 +397,22 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
    stability_metrics_result = None
    if not no_stability_metrics:
       try:
-         q_mesh = stability_q_mesh or DEFAULT_Q_MESH
-         stability_metrics_result = compute_stability_metrics_from_phonons(ph, q_mesh=q_mesh)
+         if stability_q_mesh is not None:
+            q_mesh = stability_q_mesh
+            mode = "fixed"
+         elif stability_q_mesh_mode == "adaptive":
+            q_mesh = compute_adaptive_q_mesh(np.asarray(atoms.cell))
+            mode = "adaptive"
+         else:
+            q_mesh = DEFAULT_Q_MESH
+            mode = "fixed"
+         stability_metrics_result = compute_stability_metrics_from_phonons(
+            ph, q_mesh=q_mesh, q_mesh_mode=mode)
          mesh_str = f"{q_mesh[0]}x{q_mesh[1]}x{q_mesh[2]}"
-         print(f"\n   Stability metrics ({mesh_str} mesh): "
+         print(f"\n   Stability metrics ({mesh_str} mesh, {mode}): "
                f"soft_frac={stability_metrics_result['soft_frac']:.4f}, "
                f"I_curv={stability_metrics_result['i_curv']:.4f} THz², "
-               f"Omega_inst={stability_metrics_result['omega_inst']:.4f} THz, "
-               f"classification={stability_metrics_result['classification']}")
+               f"Omega_inst={stability_metrics_result['omega_inst']:.4f} THz")
       except Exception as e:
          print(f"   Warning: could not compute stability metrics ({e})")
 
@@ -413,14 +431,10 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
       f.write(f"Fmax for Relaxation: {fmax}\n")
       f.write(f"Most Negative Frequency (overall): {bsmin:.4f} {units}\n")
       if stability_metrics_result is not None:
-         f.write(f"\n--- Validated Stability Metrics (uniform {stability_metrics_result['q_mesh'][0]}x{stability_metrics_result['q_mesh'][1]}x{stability_metrics_result['q_mesh'][2]} mesh) ---\n")
+         f.write(f"\n--- Validated Stability Metrics ({stability_metrics_result.get('q_mesh_mode', 'fixed')} {stability_metrics_result['q_mesh'][0]}x{stability_metrics_result['q_mesh'][1]}x{stability_metrics_result['q_mesh'][2]} mesh) ---\n")
          f.write(f"Soft-mode fraction (soft_frac): {stability_metrics_result['soft_frac']:.6f}\n")
          f.write(f"I_curv (p=1): {stability_metrics_result['i_curv']:.6f} THz²\n")
          f.write(f"Omega_inst (sqrt(I_curv)): {stability_metrics_result['omega_inst']:.6f} THz\n")
-         f.write(f"Classification: {stability_metrics_result['classification']}\n")
-         f.write(f"  (Stable: soft_frac < {SOFT_FRAC_STABLE_MAX}, "
-                f"Quasi-Stable: {SOFT_FRAC_STABLE_MAX} <= soft_frac < {SOFT_FRAC_UNSTABLE_MIN}, "
-                f"Unstable: soft_frac >= {SOFT_FRAC_UNSTABLE_MIN})\n")
          f.write(f"Modes: {stability_metrics_result['n_modes']} total, "
                 f"{stability_metrics_result['n_imag']} imaginary, "
                 f"{stability_metrics_result['n_excluded']} excluded (Gamma acoustic)\n")
