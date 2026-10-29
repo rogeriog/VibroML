@@ -21,6 +21,7 @@ from .utils import (
     UPETCalculator,
 )
 from ase.build import make_supercell
+from ase.data import atomic_numbers, covalent_radii
 from ase.io import read, write
 from ase.atoms import Atoms
 from ase.cell import Cell
@@ -1202,4 +1203,22 @@ def generate_random_displaced_structures(primitive_atoms,
 
     print(f"Generated {len(generated_files)} random displaced structure files.")
     return generated_files
+
+
+def min_bond_ratio(atoms):
+    """Minimum over all atom pairs (incl. periodic images) of
+    d_ij / (r_cov_i + r_cov_j). Values far below 1.0 indicate steric clashes."""
+    r = covalent_radii[atoms.get_atomic_numbers()]
+    sums = r[:, None] + r[None, :]
+    dists = atoms.get_all_distances(mic=True)
+    np.fill_diagonal(dists, np.inf)
+    return float((dists / sums).min())
+
+
+def has_steric_clash(atoms, threshold=0.5):
+    """Return True if the structure contains a steric clash, defined as any
+    atom pair closer than threshold x (sum of covalent radii). The default
+    0.5 catches fused/defect sites (observed artifact pairs sit at ratios
+    ~0.2-0.5) while remaining well below genuine compressed bonds."""
+    return min_bond_ratio(atoms) < threshold
 

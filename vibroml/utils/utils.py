@@ -349,6 +349,7 @@ def get_arg_parser_and_settings():
         "random_cell_perturbation": default_settings.get("random_cell_perturbation", True),
         "random_seed": default_settings.get("random_seed", None),
         "decomposition_threshold": default_settings.get("decomposition_threshold", 0.5),
+        "steric_clash_ratio": default_settings.get("steric_clash_ratio", 0.5),
         "md_temperature": default_settings.get("md_temperature", 300.0),
         "md_pressure": default_settings.get("md_pressure", 0.0),
         "md_time": default_settings.get("md_time", 10.0),
@@ -417,6 +418,10 @@ def get_arg_parser_and_settings():
                         help=f'Energy threshold (in eV) below reference energy for flagging structures as decomposed. '
                              f'Structures with E_relax < E_ref - decomposition_threshold are flagged as DECOMPOSED. '
                              f'Default: {settings["decomposition_threshold"]} eV')
+    parser.add_argument('--steric_clash_ratio', type=float, default=settings["steric_clash_ratio"],
+                        help=f'Minimum allowed ratio of interatomic distance to summed covalent radii. '
+                             f'Structures containing any pair closer than this ratio are flagged as STERIC_CLASH '
+                             f'and excluded from ranking. Default: {settings["steric_clash_ratio"]}')
     parser.add_argument("--constrained-supercell-growth", action="store_true", 
                     help="Enable incremental supercell variants: (1,1,1) -> +(2,1,1) -> +(1,2,1) -> +(1,1,2) iteratively.")
     parser.add_argument("--maximum-indexes-on-same-points", type=int, default=None,

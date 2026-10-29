@@ -5,7 +5,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .utils.structure_utils import initialize_calculator, generate_displaced_supercells, estimate_commensurate_supercell_size, generate_random_displaced_structures, load_structure
+from .utils.structure_utils import initialize_calculator, generate_displaced_supercells, estimate_commensurate_supercell_size, generate_random_displaced_structures, load_structure, has_steric_clash
 from .utils.relaxation_utils import relax_structure, relax_structures_in_folder, find_lowest_energy_structures
 from .utils.phonon_utils import run_single_phonon_analysis
 from .utils.neb_utils import run_neb_optimization, generate_enhanced_neb_summary
@@ -860,6 +860,7 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
   
     # Define decomposition threshold from command line argument
     decomposition_threshold = -args.decomposition_threshold  # Convert to negative for comparison (E_relax < E_ref - threshold)
+    steric_clash_ratio = getattr(args, 'steric_clash_ratio', 0.5)  # Structures with any pair closer than this fraction of summed covalent radii are flagged as STERIC_CLASH
                 
     # Determine supercell variants based on the q-point of the softest mode
     # that has a feasible commensurate supercell (within atom limit)
@@ -1032,6 +1033,7 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
 
             iteration_results = [] # To store results for this specific GA iteration
             decomposed_count = 0  # Track structures flagged as decomposed in this generation
+            steric_clash_count = 0  # Track structures flagged for steric clashes in this generation
 
             max_workers = getattr(args, 'max_workers', 1)
 
@@ -1100,9 +1102,12 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                                     'sample': sample_index, 'decomposed': False
                                 }
 
-                            # Apply decomposition filter
+                            # Apply decomposition and steric-clash filters
                             E_relax = result.get('energy_per_atom')
-                            if E_relax is not None and E_ref is not None and E_relax < (E_ref + decomposition_threshold):
+                            if result.get('relaxed_atoms') is not None and has_steric_clash(result['relaxed_atoms'], steric_clash_ratio):
+                                steric_clash_count += 1
+                                print(f"    Sample {sample_index} (Energy: {E_relax if E_relax is not None else float('nan'):.6f} eV/atom) flagged as STERIC_CLASH (min bond ratio < {steric_clash_ratio}). Excluding from ranking.")
+                            elif E_relax is not None and E_ref is not None and E_relax < (E_ref + decomposition_threshold):
                                 decomposed_count += 1
                                 print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as DECOMPOSED. Excluding from ranking.")
                             else:
@@ -1234,7 +1239,10 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                             current_cell_pars = current_cell_pars.tolist()
 
                         E_relax = best_result_for_sample['energy_per_atom']
-                        if E_ref is not None and E_relax < (E_ref + decomposition_threshold): # Note: decomposition_threshold is negative
+                        if has_steric_clash(relaxed_atoms_obj, steric_clash_ratio):
+                            steric_clash_count += 1
+                            print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as STERIC_CLASH (min bond ratio < {steric_clash_ratio}). Excluding from ranking and further GA steps.")
+                        elif E_ref is not None and E_relax < (E_ref + decomposition_threshold): # Note: decomposition_threshold is negative
                             decomposed_count += 1
                             print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as DECOMPOSED (E_relax < E_ref {E_ref:.6f} + {decomposition_threshold:.3f} eV). Excluding from ranking and further GA steps.")
                         else:
@@ -1288,25 +1296,29 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
 
             # Enhanced warning system for decomposition issues
             total_samples = len(new_offspring_params)
-            if decomposed_count > 0:
+            invalid_count = decomposed_count + steric_clash_count
+            if invalid_count > 0:
                 print(f"\n{'='*80}")
-                print(f"DECOMPOSITION WARNING - Main Iteration {main_iteration_idx}, Generation {ga_generation}")
+                print(f"INVALID-STRUCTURE WARNING - Main Iteration {main_iteration_idx}, Generation {ga_generation}")
                 print(f"{'='*80}")
                 print(f"Structures flagged as DECOMPOSED: {decomposed_count}/{total_samples} ({decomposed_count/total_samples*100:.1f}%)")
+                print(f"Structures flagged as STERIC_CLASH: {steric_clash_count}/{total_samples} ({steric_clash_count/total_samples*100:.1f}%)")
                 print(f"Reference energy (E_ref): {E_ref:.6f} eV/atom")
                 print(f"Decomposition threshold: {args.decomposition_threshold:.3f} eV")
                 print(f"Threshold condition: E_relax < E_ref - {args.decomposition_threshold:.3f} = {E_ref + decomposition_threshold:.6f} eV/atom")
+                print(f"Steric-clash threshold: min bond ratio < {steric_clash_ratio} (sum of covalent radii)")
 
-                if decomposed_count == total_samples:
-                    print(f"\n*** CRITICAL: ALL STRUCTURES FLAGGED AS DECOMPOSED ***")
+                if invalid_count == total_samples:
+                    print(f"\n*** CRITICAL: ALL STRUCTURES FLAGGED AS INVALID (DECOMPOSED or STERIC_CLASH) ***")
                     print(f"This prevents GA progression as no valid structures remain for evolution.")
-                    print(f"Consider adjusting the decomposition threshold using:")
+                    print(f"Consider adjusting the thresholds using:")
                     print(f"  --decomposition_threshold {args.decomposition_threshold + 0.5:.1f}  (more permissive)")
                     print(f"  --decomposition_threshold {args.decomposition_threshold + 1.0:.1f}  (much more permissive)")
-                elif decomposed_count > total_samples * 0.8:
-                    print(f"\n*** WARNING: High decomposition rate ({decomposed_count/total_samples*100:.1f}%) ***")
+                    print(f"  --steric_clash_ratio {steric_clash_ratio - 0.1:.1f}  (more permissive)")
+                elif invalid_count > total_samples * 0.8:
+                    print(f"\n*** WARNING: High invalid-structure rate ({invalid_count/total_samples*100:.1f}%) ***")
                     print(f"This may severely limit GA evolution effectiveness.")
-                    print(f"Consider adjusting --decomposition_threshold if this pattern persists.")
+                    print(f"Consider adjusting --decomposition_threshold or --steric_clash_ratio if this pattern persists.")
                 print(f"{'='*80}\n")
 
             if not valid_iteration_results:
@@ -1344,10 +1356,12 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 f.write(f"Threshold Condition: E_relax < E_ref - {args.decomposition_threshold:.3f} = {E_ref + decomposition_threshold:.6f} eV/atom\n")
                 f.write(f"Total Samples: {total_samples}\n")
                 f.write(f"Structures Flagged as DECOMPOSED: {decomposed_count} ({decomposed_count/total_samples*100:.1f}%)\n")
+                f.write(f"Structures Flagged as STERIC_CLASH: {steric_clash_count} ({steric_clash_count/total_samples*100:.1f}%)\n")
+                f.write(f"Steric-Clash Threshold: min bond ratio < {steric_clash_ratio}\n")
                 f.write(f"Valid Structures for GA Evolution: {len(valid_iteration_results)} ({len(valid_iteration_results)/total_samples*100:.1f}%)\n")
-                if decomposed_count == total_samples:
-                    f.write(f"*** CRITICAL: ALL STRUCTURES FLAGGED AS DECOMPOSED - GA PROGRESSION BLOCKED ***\n")
-                elif decomposed_count > total_samples * 0.8:
+                if invalid_count == total_samples:
+                    f.write(f"*** CRITICAL: ALL STRUCTURES FLAGGED AS INVALID - GA PROGRESSION BLOCKED ***\n")
+                elif invalid_count > total_samples * 0.8:
                     f.write(f"*** WARNING: High decomposition rate may limit GA effectiveness ***\n")
                 f.write(f"\n")
 
