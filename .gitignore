@@ -24,7 +24,6 @@ wheels/
 *.tmp
 *.log
 
-examples/
 get_full_package_context.py
 concat_files.py
 concatenated_project_summary.txt
@@ -40,3 +39,4 @@ vibroml.egg-info/
 dist/
 b2_metrics_*/
 fairchem_models/
+examples_archive/

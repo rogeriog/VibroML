@@ -72,16 +72,16 @@ This mode performs a single phonon calculation on your structure. It will relax 
 
 ```bash
 # Run a phonon calculation with MACE, skipping relaxation
-vibroml --cif examples/your_material.cif --engine mace --no-relax
+vibroml --cif examples/CsPbI3_cubic.cif --engine mace --no-relax
 
 # Run with M3GNet, using a 4x4x4 supercell and custom displacement
-vibroml --cif examples/another_material.cif --engine m3gnet --supercell "4" --delta 0.02 --units cm-1
+vibroml --cif examples/Bi2Sn2O7_cubic.cif --engine m3gnet --supercell "4" --delta 0.02 --units cm-1
 
 # NEW: Use explicit supercell dimensions for anisotropic materials
 vibroml --cif layered_material.cif --supercell "2,2,8" --engine mace --delta 0.01 --units THz
 
 # Backward compatibility: old format still works
-vibroml --cif examples/another_material.cif --engine m3gnet --supercell_n 4 --delta 0.02 --units cm-1
+vibroml --cif examples/Bi2Sn2O7_cubic.cif --engine m3gnet --supercell_n 4 --delta 0.02 --units cm-1
 ```
 
 **Output:**
@@ -105,19 +105,19 @@ This mode automates the search for stable phases. It performs a parameter sweep 
 
 ```bash
 # Run auto-screen with MACE, using the default GA method for soft mode optimization
-vibroml --cif examples/unstable_material.cif --engine mace --auto
+vibroml --cif examples/LiF_cubic.cif --engine mace --auto
 
 # Run auto-screen with M3GNet, using the traditional method
-vibroml --cif examples/another_unstable.cif --engine m3gnet --auto --fmax 0.0005 --method traditional
+vibroml --cif examples/HfO2_cubic.cif --engine m3gnet --auto --fmax 0.0005 --method traditional
 
 # Run auto-screen with comprehensive traditional_all method
-vibroml --cif examples/unstable_material.cif --engine mace --auto --method traditional_all
+vibroml --cif examples/LiF_cubic.cif --engine mace --auto --method traditional_all
 
 # Run auto-screen with random optimization method
-vibroml --cif examples/unstable_material.cif --engine mace --auto --method opt_random
+vibroml --cif examples/LiF_cubic.cif --engine mace --auto --method opt_random
 
 # Use custom output prefix for organized results
-vibroml --cif examples/unstable_material.cif --engine mace --auto --output-prefix "my_project"
+vibroml --cif examples/LiF_cubic.cif --engine mace --auto --output-prefix "my_project"
 ```
 
 **Output:**
@@ -148,7 +148,7 @@ Systematic grid search through displacement scales and cell transformations:
 
 ```bash
 # Run traditional soft mode optimization directly
-vibroml --cif examples/unstable_material.cif --engine mace --method traditional
+vibroml --cif examples/LiF_cubic.cif --engine mace --method traditional
 ```
 
 ##### Traditional-All Method
@@ -156,7 +156,7 @@ Comprehensive exploration where each soft mode pairing explores both configurati
 
 ```bash
 # Run traditional_all method for exhaustive soft mode exploration
-vibroml --cif examples/unstable_material.cif --engine mace --method traditional_all
+vibroml --cif examples/LiF_cubic.cif --engine mace --method traditional_all
 ```
 
 ##### Genetic Algorithm Method
@@ -164,7 +164,7 @@ Evolutionary optimization for intelligent structure exploration:
 
 ```bash
 # Run GA optimization (default method)
-vibroml --cif examples/unstable_material.cif --engine mace --method ga
+vibroml --cif examples/LiF_cubic.cif --engine mace --method ga
 ```
 
 ##### Random Optimization Method
@@ -172,7 +172,7 @@ Stochastic structure generation with random displacements:
 
 ```bash
 # Run random optimization method
-vibroml --cif examples/unstable_material.cif --engine mace --method opt_random
+vibroml --cif examples/LiF_cubic.cif --engine mace --method opt_random
 ```
 
 #### 4. Transition State Analysis Methods
