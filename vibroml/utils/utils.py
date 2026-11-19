@@ -350,6 +350,8 @@ def get_arg_parser_and_settings():
         "random_seed": default_settings.get("random_seed", None),
         "decomposition_threshold": default_settings.get("decomposition_threshold", 0.5),
         "steric_clash_ratio": default_settings.get("steric_clash_ratio", 0.5),
+        "coherence_connectivity_ratio": default_settings.get("coherence_connectivity_ratio", 1.45),
+        "coherence_isolation_ratio": default_settings.get("coherence_isolation_ratio", 1.5),
         "md_temperature": default_settings.get("md_temperature", 300.0),
         "md_pressure": default_settings.get("md_pressure", 0.0),
         "md_time": default_settings.get("md_time", 10.0),
@@ -422,6 +424,14 @@ def get_arg_parser_and_settings():
                         help=f'Minimum allowed ratio of interatomic distance to summed covalent radii. '
                              f'Structures containing any pair closer than this ratio are flagged as STERIC_CLASH '
                              f'and excluded from ranking. Default: {settings["steric_clash_ratio"]}')
+    parser.add_argument('--coherence_connectivity_ratio', type=float, default=settings["coherence_connectivity_ratio"],
+                        help=f'Bond cutoff, as a ratio of summed covalent radii, used to build the connectivity '
+                             f'graph for the structural-coherence check. Structures containing an unbound site or a '
+                             f'finite (non-percolating) fragment are flagged as INCOHERENT and excluded from '
+                             f'ranking. Default: {settings["coherence_connectivity_ratio"]}')
+    parser.add_argument('--coherence_isolation_ratio', type=float, default=settings["coherence_isolation_ratio"],
+                        help=f'Isolation distance, as a ratio of summed covalent radii, beyond which an atom with '
+                             f'no neighbours is flagged as INCOHERENT. Default: {settings["coherence_isolation_ratio"]}')
     parser.add_argument("--constrained-supercell-growth", action="store_true", 
                     help="Enable incremental supercell variants: (1,1,1) -> +(2,1,1) -> +(1,2,1) -> +(1,1,2) iteratively.")
     parser.add_argument("--maximum-indexes-on-same-points", type=int, default=None,
@@ -481,13 +491,16 @@ def get_arg_parser_and_settings():
                              'Default: (6,6,6). The metrics are computed on a uniform Monkhorst-Pack mesh '
                              'with 3 Gamma acoustic modes excluded by index. '
                              'Overrides --stability-q-mesh-mode when specified.')
-    parser.add_argument('--stability-q-mesh-mode', type=str, default='fixed',
+    parser.add_argument('--stability-q-mesh-mode', type=str, default='adaptive',
                         choices=['fixed', 'adaptive'],
                         help='Q-mesh selection mode for stability metrics. '
-                             '"fixed": use the uniform (6,6,6) Monkhorst-Pack grid (default, used in the paper). '
-                             '"adaptive": compute a density-based mesh targeting a maximum q-spacing of '
-                             '0.30 1/Å with a floor of (6,6,6), giving ~8x8x8 for small cells and '
-                             '6x6x6 for larger cells. Ignored when --stability-q-mesh is specified.')
+                             '"adaptive" (default): compute a density-based mesh targeting a maximum '
+                             'q-spacing of 0.30 1/Å with a floor of (6,6,6), giving ~8x8x8 for small '
+                             'cells and 6x6x6 for larger cells. '
+                             '"fixed": use the uniform (6,6,6) Monkhorst-Pack grid '
+                             '(legacy campaign setting; identical to adaptive for cells with '
+                             'reciprocal lengths below the floor). '
+                             'Ignored when --stability-q-mesh is specified.')
     parser.add_argument('--no-stability-metrics', action='store_true', default=False,
                         help='Disable computation of stability metrics (soft_frac, I_curv). '
                              'By default, these are computed alongside the phonon '

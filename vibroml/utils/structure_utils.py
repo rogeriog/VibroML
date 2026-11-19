@@ -1222,3 +1222,69 @@ def has_steric_clash(atoms, threshold=0.5):
     ~0.2-0.5) while remaining well below genuine compressed bonds."""
     return min_bond_ratio(atoms) < threshold
 
+
+def has_incoherence(atoms, conn_ratio=1.45, isolation_ratio=1.5):
+    """Return True if the structure is incoherent, i.e. it contains atoms
+    that are not part of a percolating bond network.
+
+    Bonds are contacts shorter than conn_ratio x (r_cov_i + r_cov_j). A
+    structure is flagged when either
+
+    - any atom has no bonded neighbour within isolation_ratio x
+      (r_cov_i + r_cov_j) (unbound site), or
+    - any connected component of the bond graph contains no edge crossing
+      a periodic boundary (a finite fragment that does not wrap the cell).
+      Every atom of a periodic bulk crystal belongs to a component that
+      wraps the cell in at least one direction (a layered material wraps
+      in-plane), so a non-wrapping component is a cluster floating in a
+      box.
+
+    Designed for bulk inorganic crystals; molecular crystals can
+    false-flag because intermolecular distances exceed the bond cutoff."""
+    from ase.neighborlist import neighbor_list
+    numbers = atoms.get_atomic_numbers()
+    radii = covalent_radii[numbers]
+    # per-atom connection radii: ASE pairs i,j are linked when
+    # d_ij < r_i + r_j
+    cut = conn_ratio * radii
+    i, j, S = neighbor_list('ijS', atoms, cut)
+    n = len(atoms)
+    bonded = np.zeros(n, dtype=bool)
+    if len(i):
+        bonded[np.unique(np.concatenate([i, j]))] = True
+    # isolation check uses the looser isolation_ratio cutoff
+    if not bonded.all():
+        cut_iso = isolation_ratio * radii
+        ii, jj, _ = neighbor_list('ijS', atoms, cut_iso)
+        if len(ii):
+            bonded[np.unique(np.concatenate([ii, jj]))] = True
+        if not bonded.all():
+            return True
+    # union-find on bond edges
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    wrap_root = set()
+    for a, b, s in zip(i, j, S):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+        if np.any(s != 0):
+            wrap_root.add(find(b))
+    roots = {find(x) for x in range(n)}
+    for r in roots:
+        if r not in wrap_root:
+            # verify no periodic edge inside this component
+            members = {x for x in range(n) if find(x) == r}
+            wraps = any(np.any(s != 0)
+                        for a, b, s in zip(i, j, S)
+                        if a in members or b in members)
+            if not wraps:
+                return True
+    return False
+

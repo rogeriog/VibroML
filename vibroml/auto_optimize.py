@@ -5,7 +5,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .utils.structure_utils import initialize_calculator, generate_displaced_supercells, estimate_commensurate_supercell_size, generate_random_displaced_structures, load_structure, has_steric_clash
+from .utils.structure_utils import initialize_calculator, generate_displaced_supercells, estimate_commensurate_supercell_size, generate_random_displaced_structures, load_structure, has_steric_clash, has_incoherence
 from .utils.relaxation_utils import relax_structure, relax_structures_in_folder, find_lowest_energy_structures
 from .utils.phonon_utils import run_single_phonon_analysis
 from .utils.neb_utils import run_neb_optimization, generate_enhanced_neb_summary
@@ -861,6 +861,8 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
     # Define decomposition threshold from command line argument
     decomposition_threshold = -args.decomposition_threshold  # Convert to negative for comparison (E_relax < E_ref - threshold)
     steric_clash_ratio = getattr(args, 'steric_clash_ratio', 0.5)  # Structures with any pair closer than this fraction of summed covalent radii are flagged as STERIC_CLASH
+    coherence_conn_ratio = getattr(args, 'coherence_connectivity_ratio', 1.45)  # Bond cutoff (x summed covalent radii) for the connectivity graph
+    coherence_iso_ratio = getattr(args, 'coherence_isolation_ratio', 1.5)  # Atoms with no neighbour within this ratio are flagged as INCOHERENT
                 
     # Determine supercell variants based on the q-point of the softest mode
     # that has a feasible commensurate supercell (within atom limit)
@@ -1034,6 +1036,7 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
             iteration_results = [] # To store results for this specific GA iteration
             decomposed_count = 0  # Track structures flagged as decomposed in this generation
             steric_clash_count = 0  # Track structures flagged for steric clashes in this generation
+            incoherent_count = 0  # Track structures flagged for loss of structural coherence in this generation
 
             max_workers = getattr(args, 'max_workers', 1)
 
@@ -1107,6 +1110,9 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                             if result.get('relaxed_atoms') is not None and has_steric_clash(result['relaxed_atoms'], steric_clash_ratio):
                                 steric_clash_count += 1
                                 print(f"    Sample {sample_index} (Energy: {E_relax if E_relax is not None else float('nan'):.6f} eV/atom) flagged as STERIC_CLASH (min bond ratio < {steric_clash_ratio}). Excluding from ranking.")
+                            elif result.get('relaxed_atoms') is not None and has_incoherence(result['relaxed_atoms'], coherence_conn_ratio, coherence_iso_ratio):
+                                incoherent_count += 1
+                                print(f"    Sample {sample_index} (Energy: {E_relax if E_relax is not None else float('nan'):.6f} eV/atom) flagged as INCOHERENT (unbound site or non-percolating fragment). Excluding from ranking.")
                             elif E_relax is not None and E_ref is not None and E_relax < (E_ref + decomposition_threshold):
                                 decomposed_count += 1
                                 print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as DECOMPOSED. Excluding from ranking.")
@@ -1242,6 +1248,9 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                         if has_steric_clash(relaxed_atoms_obj, steric_clash_ratio):
                             steric_clash_count += 1
                             print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as STERIC_CLASH (min bond ratio < {steric_clash_ratio}). Excluding from ranking and further GA steps.")
+                        elif has_incoherence(relaxed_atoms_obj, coherence_conn_ratio, coherence_iso_ratio):
+                            incoherent_count += 1
+                            print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as INCOHERENT (unbound site or non-percolating fragment). Excluding from ranking and further GA steps.")
                         elif E_ref is not None and E_relax < (E_ref + decomposition_threshold): # Note: decomposition_threshold is negative
                             decomposed_count += 1
                             print(f"    Sample {sample_index} (Energy: {E_relax:.6f} eV/atom) flagged as DECOMPOSED (E_relax < E_ref {E_ref:.6f} + {decomposition_threshold:.3f} eV). Excluding from ranking and further GA steps.")
@@ -1296,20 +1305,22 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
 
             # Enhanced warning system for decomposition issues
             total_samples = len(new_offspring_params)
-            invalid_count = decomposed_count + steric_clash_count
+            invalid_count = decomposed_count + steric_clash_count + incoherent_count
             if invalid_count > 0:
                 print(f"\n{'='*80}")
                 print(f"INVALID-STRUCTURE WARNING - Main Iteration {main_iteration_idx}, Generation {ga_generation}")
                 print(f"{'='*80}")
                 print(f"Structures flagged as DECOMPOSED: {decomposed_count}/{total_samples} ({decomposed_count/total_samples*100:.1f}%)")
                 print(f"Structures flagged as STERIC_CLASH: {steric_clash_count}/{total_samples} ({steric_clash_count/total_samples*100:.1f}%)")
+                print(f"Structures flagged as INCOHERENT: {incoherent_count}/{total_samples} ({incoherent_count/total_samples*100:.1f}%)")
                 print(f"Reference energy (E_ref): {E_ref:.6f} eV/atom")
                 print(f"Decomposition threshold: {args.decomposition_threshold:.3f} eV")
                 print(f"Threshold condition: E_relax < E_ref - {args.decomposition_threshold:.3f} = {E_ref + decomposition_threshold:.6f} eV/atom")
                 print(f"Steric-clash threshold: min bond ratio < {steric_clash_ratio} (sum of covalent radii)")
+                print(f"Coherence thresholds: bond connectivity < {coherence_conn_ratio}x, isolation < {coherence_iso_ratio}x (summed covalent radii)")
 
                 if invalid_count == total_samples:
-                    print(f"\n*** CRITICAL: ALL STRUCTURES FLAGGED AS INVALID (DECOMPOSED or STERIC_CLASH) ***")
+                    print(f"\n*** CRITICAL: ALL STRUCTURES FLAGGED AS INVALID (DECOMPOSED, STERIC_CLASH or INCOHERENT) ***")
                     print(f"This prevents GA progression as no valid structures remain for evolution.")
                     print(f"Consider adjusting the thresholds using:")
                     print(f"  --decomposition_threshold {args.decomposition_threshold + 0.5:.1f}  (more permissive)")
@@ -1357,7 +1368,9 @@ def run_ga_soft_mode_optimization(args, base_output_dir, initial_atoms_for_soft_
                 f.write(f"Total Samples: {total_samples}\n")
                 f.write(f"Structures Flagged as DECOMPOSED: {decomposed_count} ({decomposed_count/total_samples*100:.1f}%)\n")
                 f.write(f"Structures Flagged as STERIC_CLASH: {steric_clash_count} ({steric_clash_count/total_samples*100:.1f}%)\n")
+                f.write(f"Structures Flagged as INCOHERENT: {incoherent_count} ({incoherent_count/total_samples*100:.1f}%)\n")
                 f.write(f"Steric-Clash Threshold: min bond ratio < {steric_clash_ratio}\n")
+                f.write(f"Coherence Thresholds: bond connectivity < {coherence_conn_ratio}x, isolation < {coherence_iso_ratio}x\n")
                 f.write(f"Valid Structures for GA Evolution: {len(valid_iteration_results)} ({len(valid_iteration_results)/total_samples*100:.1f}%)\n")
                 if invalid_count == total_samples:
                     f.write(f"*** CRITICAL: ALL STRUCTURES FLAGGED AS INVALID - GA PROGRESSION BLOCKED ***\n")

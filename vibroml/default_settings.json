@@ -23,6 +23,8 @@
     "ga_mutation_rate": 0.2,
     "decomposition_threshold": 0.5,
     "steric_clash_ratio": 0.5,
+    "coherence_connectivity_ratio": 1.45,
+    "coherence_isolation_ratio": 1.5,
     "ga_generations": 3,
     "default_method": "phonon_only",
     "random_displacement_bounds": [0.1, 2.0],
