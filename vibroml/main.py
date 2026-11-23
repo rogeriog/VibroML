@@ -448,7 +448,7 @@ def main():
             checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
             checkpoint_model_path=args.checkpoint_model,
             stability_q_mesh=getattr(args, 'stability_q_mesh', None),
-            stability_q_mesh_mode=getattr(args, 'stability_q_mesh_mode', 'fixed'),
+            stability_q_mesh_mode=getattr(args, 'stability_q_mesh_mode', 'adaptive'),
             no_stability_metrics=getattr(args, 'no_stability_metrics', False)
         )
 
@@ -653,7 +653,7 @@ def main():
                     checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
                     checkpoint_model_path=args.checkpoint_model,
                     stability_q_mesh=getattr(args, 'stability_q_mesh', None),
-                    stability_q_mesh_mode=getattr(args, 'stability_q_mesh_mode', 'fixed'),
+                    stability_q_mesh_mode=getattr(args, 'stability_q_mesh_mode', 'adaptive'),
                     no_stability_metrics=getattr(args, 'no_stability_metrics', False)
                 )
         else:
@@ -684,7 +684,7 @@ def main():
                 checkpoint_path=args.checkpoint, nep_model_path=args.nep_model,
                 checkpoint_model_path=args.checkpoint_model,
                 stability_q_mesh=getattr(args, 'stability_q_mesh', None),
-                stability_q_mesh_mode=getattr(args, 'stability_q_mesh_mode', 'fixed'),
+                stability_q_mesh_mode=getattr(args, 'stability_q_mesh_mode', 'adaptive'),
                 no_stability_metrics=getattr(args, 'no_stability_metrics', False)
             )
 

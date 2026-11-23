@@ -66,7 +66,7 @@ from .structure_utils import estimate_commensurate_supercell_size
 def compute_stability_metrics_from_phonons(
     ph,
     q_mesh=DEFAULT_Q_MESH,
-    q_mesh_mode="fixed",
+    q_mesh_mode="adaptive",
 ):
     """Compute validated stability metrics (soft_frac, I_curv) on a uniform q-mesh.
 
@@ -81,17 +81,21 @@ def compute_stability_metrics_from_phonons(
     q_mesh : tuple of int, default (6, 6, 6)
         Uniform q-point mesh for frequency evaluation.  Ignored when
         ``q_mesh_mode="adaptive"``.
-    q_mesh_mode : str, default "fixed"
-        ``"fixed"``: use the supplied ``q_mesh``.
+    q_mesh_mode : str, default "adaptive"
         ``"adaptive"``: compute a density-based mesh from the primitive cell
-        stored in ``ph.atoms``, targeting a maximum q-spacing of 0.15 1/Å
+        stored in ``ph.atoms``, targeting a maximum q-spacing of 0.30 1/Å
         with a floor of (6, 6, 6).
+        ``"fixed"``: use the supplied ``q_mesh``.
 
     Returns
     -------
     dict
         Keys: soft_frac, i_curv, omega_inst, omega_min,
-        n_modes, n_imag, n_excluded, q_mesh.
+        n_modes, n_imag, n_excluded, q_mesh, q_mesh_mode,
+        and a complementary special-point screen
+        (special_point_labels, n_special_points, special_omega_min,
+        special_soft_frac, special_n_imag) when the cell's band path
+        can be determined.
     """
     if q_mesh_mode == "adaptive":
         cell = np.asarray(ph.atoms.cell)
@@ -108,6 +112,30 @@ def compute_stability_metrics_from_phonons(
     metrics = compute_all_metrics(freqs_THz, gamma_indices=gamma_indices)
     metrics["q_mesh"] = list(q_mesh)
     metrics["q_mesh_mode"] = q_mesh_mode
+
+    # Complementary special-point screen: evaluate frequencies exactly at the
+    # high-symmetry k-points of the primitive cell's band path.  An unshifted
+    # even Monkhorst-Pack mesh does not sample zone-boundary special points,
+    # so instabilities concentrated there (e.g. M-point tilts) are reported
+    # separately rather than inferred from the mesh alone.
+    try:
+        special_points = ph.atoms.cell.bandpath().special_points
+        if special_points:
+            sp_labels = sorted(special_points)
+            sp_q = np.array([special_points[k] for k in sp_labels])
+            sp_freqs_THz = ph.band_structure(
+                sp_q, modes=False, verbose=False) / EV_TO_THZ_FACTOR
+            sp_gamma = np.where(np.all(np.abs(sp_q) < 1e-10, axis=1))[0]
+            sp_metrics = compute_all_metrics(
+                sp_freqs_THz, gamma_indices=sp_gamma)
+            metrics["special_point_labels"] = sp_labels
+            metrics["n_special_points"] = len(sp_labels)
+            metrics["special_omega_min"] = sp_metrics["omega_min"]
+            metrics["special_soft_frac"] = sp_metrics["soft_frac"]
+            metrics["special_n_imag"] = sp_metrics["n_imag"]
+    except Exception:
+        pass
+
     return metrics
 
 
@@ -203,7 +231,7 @@ def calculate_and_save_pdos(ph, dos_grid, width, npts, output_dir, prefix, units
       traceback.print_exc()
       
    print(f"  PDOS calculation took {time.time() - start_time:.2f} s")
-def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False, max_workers=1, model_name=None, checkpoint_path=None, nep_model_path=None, checkpoint_model_path=None, stability_q_mesh=None, stability_q_mesh_mode="fixed", no_stability_metrics=False):
+def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims, delta, fmax, output_dir, prefix="phonon_run", phonon_path_npoints=100, phonon_dos_grid=(40,40,40), traj_kT=1.0, num_modes_to_return=2, ph_obj_for_specific_mode=None, q_point_for_specific_mode=None, band_idx_for_specific_mode=None, displacement_magnitude=1.0, preloaded_eigenmode_data=None, final_structures_dir=None, negative_phonon_threshold=None, save_yaml=False, compute_pdos=False, max_workers=1, model_name=None, checkpoint_path=None, nep_model_path=None, checkpoint_model_path=None, stability_q_mesh=None, stability_q_mesh_mode="adaptive", no_stability_metrics=False):
    """
    Runs a single phonon calculation step (calculate, plot, save) on a given atoms object.
 
@@ -413,6 +441,11 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
                f"soft_frac={stability_metrics_result['soft_frac']:.4f}, "
                f"I_curv={stability_metrics_result['i_curv']:.4f} THz², "
                f"Omega_inst={stability_metrics_result['omega_inst']:.4f} THz")
+         if 'special_omega_min' in stability_metrics_result:
+            print(f"   Special-point screen "
+                  f"({stability_metrics_result['n_special_points']} seekpath points): "
+                  f"omega_min={stability_metrics_result['special_omega_min']:.4f} THz, "
+                  f"imaginary special-point modes={stability_metrics_result['special_n_imag']}")
       except Exception as e:
          print(f"   Warning: could not compute stability metrics ({e})")
 
@@ -438,6 +471,15 @@ def run_single_phonon_analysis(atoms, calculator, engine, units, supercell_dims,
          f.write(f"Modes: {stability_metrics_result['n_modes']} total, "
                 f"{stability_metrics_result['n_imag']} imaginary, "
                 f"{stability_metrics_result['n_excluded']} excluded (Gamma acoustic)\n")
+         if 'special_omega_min' in stability_metrics_result:
+            f.write(f"\n--- Special-Point Screen (high-symmetry k-points) ---\n")
+            f.write(f"Points evaluated: {stability_metrics_result['n_special_points']} "
+                   f"({', '.join(stability_metrics_result['special_point_labels'])})\n")
+            f.write(f"Minimum frequency at special points: "
+                   f"{stability_metrics_result['special_omega_min']:.6f} THz\n")
+            f.write(f"Imaginary modes at special points: "
+                   f"{stability_metrics_result['special_n_imag']} "
+                   f"(soft_frac={stability_metrics_result['special_soft_frac']:.6f})\n")
       f.write(f"Time Taken for Phonon Analysis: {time_taken:.2f} seconds\n\n")
       try:
          energy = atoms.get_potential_energy()
